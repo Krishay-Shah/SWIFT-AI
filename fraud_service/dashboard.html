@@ -358,49 +358,95 @@
 
         async function fetchStats() {
             try {
-                // 1. Fetch Aggregated Stats
-                const statsResponse = await fetch('/api/stats/dashboard');
-                const data = await statsResponse.json();
+                // Determine the base URL for the banking service
+                // If we are on EC2, localhost won't work from the browser.
+                const bankingBaseUrl = `${window.location.protocol}//${window.location.hostname}:5000`;
+
+                // Fetch ALL transactions from Banking Service
+                const txnResponse = await fetch(`${bankingBaseUrl}/api/transactions?limit=100`);
+                const transactions = await txnResponse.json();
+
+                console.log(`[FRAUD DASHBOARD] Fetched ${transactions.length} transactions`);
+
+                // Calculate KPIs
+                const blocked = transactions.filter(t => (t.status === 'BLOCKED' || t.fraud_check?.status === 'BLOCKED')).length;
+                const review = transactions.filter(t => (t.status === 'REVIEW' || t.fraud_check?.status === 'REVIEW')).length;
+                const approved = transactions.filter(t => (t.status === 'APPROVED' || t.status === 'COMPLETED' || t.fraud_check?.status === 'APPROVED')).length;
+
+                const totalRisk = transactions.reduce((sum, t) => sum + (t.fraud_check?.risk_score || t.risk_score || 0), 0);
+                const avgRisk = transactions.length > 0 ? Math.round(totalRisk / transactions.length) : 0;
 
                 // Update KPI Cards
                 const kpiEls = document.querySelectorAll('.stat-card h2');
                 if (kpiEls.length >= 4) {
-                    kpiEls[0].innerText = data.kpis.alerts;
-                    kpiEls[1].innerText = data.kpis.blocked + data.kpis.review;
-                    kpiEls[2].innerText = data.kpis.approved;
-                    kpiEls[3].innerText = data.kpis.avg_risk + '%';
+                    kpiEls[0].innerText = blocked + review; // Alerts (blocked + review)
+                    kpiEls[1].innerText = blocked + review; // High-risk
+                    kpiEls[2].innerText = approved;
+                    kpiEls[3].innerText = avgRisk + '%';
                 }
 
-                // Update Charts
-                if (mainChart) {
-                    mainChart.data.labels = data.charts.trends.labels;
-                    mainChart.data.datasets[0].data = data.charts.trends.data;
-                    mainChart.update();
-                }
-
+                // Update Doughnut Chart (Inquiries Overview)
                 if (doughnutChart) {
-                    doughnutChart.data.datasets[0].data = data.charts.distribution;
+                    doughnutChart.data.datasets[0].data = [approved, review, blocked];
                     doughnutChart.update();
+
+                    // Update footer stats
+                    const footer = document.querySelector('.card-footer .row');
+                    if (footer) {
+                        const total = transactions.length || 1;
+                        footer.innerHTML = `
+                            <div class="col-4">
+                                <div class="mb-1"><i class="fas fa-circle text-success me-1"></i> Accepted</div>
+                                <strong>${approved} <small class="text-muted">${Math.round(approved / total * 100)}%</small></strong>
+                            </div>
+                            <div class="col-4">
+                                <div class="mb-1"><i class="fas fa-circle text-warning me-1"></i> Review</div>
+                                <strong>${review} <small class="text-muted">${Math.round(review / total * 100)}%</small></strong>
+                            </div>
+                            <div class="col-4">
+                                <div class="mb-1"><i class="fas fa-circle text-danger me-1"></i> Refused</div>
+                                <strong>${blocked} <small class="text-muted">${Math.round(blocked / total * 100)}%</small></strong>
+                            </div>
+                        `;
+                    }
                 }
 
-                if (window.cardsChart && data.charts.card_types) {
-                    window.cardsChart.data.datasets[0].data = data.charts.card_types;
+                // Calculate Credit/Debit Card breakdown
+                let creditCount = 0;
+                let debitCount = 0;
+
+                transactions.forEach(t => {
+                    const cardId = t.payment_method?.card_id || t.card_id;
+                    if (cardId === 'DEBIT_CARD' || cardId === 'debit') {
+                        debitCount++;
+                    } else if (cardId) {
+                        creditCount++;
+                    }
+                });
+
+                // Update Cards Chart
+                if (window.cardsChart) {
+                    window.cardsChart.data.labels = ['Credit Cards', 'Debit Cards'];
+                    window.cardsChart.data.datasets[0].data = [creditCount, debitCount];
                     window.cardsChart.update();
                 }
 
-                // 2. Update Map with Recent Transactions
-                const txnResponse = await fetch('/api/transactions?limit=20');
-                const transactions = await txnResponse.json();
-
+                // Update Map with ALL Transactions (including BLOCKED)
                 markers.clearLayers();
+                let mapCount = 0;
+
                 transactions.forEach(txn => {
                     const lat = txn.latitude || (txn.location && txn.location.latitude);
                     const lng = txn.longitude || (txn.location && txn.location.longitude);
+                    const status = txn.fraud_check ? txn.fraud_check.status : (txn.status || 'COMPLETED');
 
-                    if (lat && lng) {
-                        const color = txn.decision === 'BLOCKED' ? '#dc3545' : (txn.decision === 'REVIEW' ? '#ffc107' : '#198754');
+                    if (lat && lng && lat !== 0 && lng !== 0) {
+                        mapCount++;
+                        const color = (status === 'BLOCKED') ? '#dc3545' :
+                            ((status === 'REVIEW') ? '#ffc107' : '#198754');
+
                         const marker = L.circleMarker([lat, lng], {
-                            radius: 6,
+                            radius: 8,
                             fillColor: color,
                             color: "#fff",
                             weight: 2,
@@ -408,16 +454,42 @@
                             fillOpacity: 0.8
                         }).addTo(markers);
 
-                        const reason = (txn.reasons && txn.reasons.length > 0) ? txn.reasons[0] : 'N/A';
-                        marker.bindPopup(`<b>${txn.transaction_id}</b><br>Amt: $${txn.amount}<br>Status: ${txn.decision}<br>AI: ${reason}`);
+                        const txnId = txn.transaction_id || txn.id || 'N/A';
+                        const reasons = txn.fraud_check?.reasons || txn.reasons || [];
+                        const reason = reasons.length > 0 ? reasons[0] : 'N/A';
+                        const riskScore = txn.fraud_check?.risk_score || txn.risk_score || 0;
+
+                        marker.bindPopup(`
+                            <b>${txnId}</b><br>
+                            Amount: $${txn.amount}<br>
+                            Status: <span style="color: ${color}">${status}</span><br>
+                            Risk: ${riskScore}/100<br>
+                            Reason: ${reason}<br>
+                            IP: ${txn.ip_address || 'N/A'}
+                        `);
                     }
                 });
 
-            } catch (e) { console.error('Dashboard Sync Error:', e); }
+                console.log(`[MAP] Plotted ${mapCount} transactions on map`);
+
+                // Update Line Chart (Risk Score Evolution)
+                if (mainChart) {
+                    const last10 = transactions.slice(0, 10).reverse();
+                    const labels = last10.map((t, i) => `T${i + 1}`);
+                    const data = last10.map(t => t.fraud_check?.risk_score || t.risk_score || 0);
+
+                    mainChart.data.labels = labels;
+                    mainChart.data.datasets[0].data = data;
+                    mainChart.update();
+                }
+
+            } catch (e) {
+                console.error('Dashboard Sync Error:', e);
+            }
         }
 
         const ctx1 = document.getElementById('systemAdvicesChart').getContext('2d');
-        mainChart = new Chart(ctx1, {
+        let mainChart = new Chart(ctx1, {
             type: 'line',
             data: {
                 labels: [],
@@ -434,7 +506,7 @@
         });
 
         const ctx2 = document.getElementById('inquiriesChart').getContext('2d');
-        doughnutChart = new Chart(ctx2, {
+        let doughnutChart = new Chart(ctx2, {
             type: 'doughnut',
             data: {
                 labels: ['Approved', 'Review', 'Blocked'],
@@ -450,7 +522,7 @@
         window.cardsChart = new Chart(ctx3, {
             type: 'bar',
             data: {
-                labels: ['Visa/MC', 'Amex/Other'], // Updated labels
+                labels: ['Credit Cards', 'Debit Cards'],
                 datasets: [{
                     label: 'Transactions',
                     data: [0, 0],

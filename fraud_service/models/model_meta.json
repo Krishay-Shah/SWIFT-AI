@@ -1,0 +1,1 @@
+{"input_features": ["amt", "category", "city", "state", "lat", "long", "merch_lat", "merch_long", "hour", "day_of_week", "lat_diff", "lon_diff"], "numeric": ["amt", "lat", "long", "merch_lat", "merch_long", "hour", "day_of_week", "lat_diff", "lon_diff"], "categorical": ["category", "state", "city"]}

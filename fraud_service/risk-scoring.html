@@ -357,52 +357,99 @@
 
         async function fetchRiskData() {
             try {
-                // 1. Fetch Stats for Cards and Distribution
-                const statsResponse = await fetch('/api/stats/dashboard');
-                const statsData = await statsResponse.json();
+                // Fetch ALL transactions from Banking Service
+                const response = await fetch(`${window.location.protocol}//${window.location.hostname}:5000/api/transactions?limit=100`);
+                const transactions = await response.json();
+
+                console.log(`[RISK SCORING] Fetched ${transactions.length} transactions`);
+
+                // Calculate risk categories
+                let critical = 0;  // 85-100
+                let high = 0;      // 60-84
+                let medium = 0;    // 40-59
+                let low = 0;       // 0-39
+
+                // Risk distribution bins
+                let bin0_20 = 0;
+                let bin21_40 = 0;
+                let bin41_60 = 0;
+                let bin61_80 = 0;
+                let bin81_100 = 0;
+
+                transactions.forEach(txn => {
+                    const risk = txn.fraud_check?.risk_score || txn.risk_score || 0;
+
+                    // Categories
+                    if (risk >= 85) critical++;
+                    else if (risk >= 60) high++;
+                    else if (risk >= 40) medium++;
+                    else low++;
+
+                    // Distribution bins
+                    if (risk <= 20) bin0_20++;
+                    else if (risk <= 40) bin21_40++;
+                    else if (risk <= 60) bin41_60++;
+                    else if (risk <= 80) bin61_80++;
+                    else bin81_100++;
+                });
 
                 // Update Overview Cards
                 const kpiEls = document.querySelectorAll('.card h2');
                 if (kpiEls.length >= 4) {
-                    kpiEls[0].innerText = statsData.kpis.blocked;
-                    kpiEls[1].innerText = statsData.kpis.review;
-                    kpiEls[2].innerText = Math.round(statsData.kpis.total_txns * 0.15); // Mock medium for variety
-                    kpiEls[3].innerText = statsData.kpis.approved;
+                    kpiEls[0].innerText = critical;
+                    kpiEls[1].innerText = high;
+                    kpiEls[2].innerText = medium;
+                    kpiEls[3].innerText = low;
                 }
 
                 // Update Distribution Chart
-                riskDistChart.data.datasets[0].data = statsData.charts.risk_bins;
+                riskDistChart.data.datasets[0].data = [bin0_20, bin21_40, bin41_60, bin61_80, bin81_100];
                 riskDistChart.update();
 
-                // 2. Fetch Recent High-Risk Transactions for Table
-                const response = await fetch('/api/transactions?limit=15');
-                const transactions = await response.json();
+                // Update Categories Pie Chart
+                if (window.riskCategoriesChart) {
+                    window.riskCategoriesChart.data.datasets[0].data = [critical, high, medium, low];
+                    window.riskCategoriesChart.update();
+                }
 
+                // Update High-Risk Transactions Table
                 const tbody = document.querySelector('tbody');
                 tbody.innerHTML = '';
 
-                transactions.forEach(txn => {
-                    if (txn.risk_score < 40) return; // Only show significant risk
+                // Filter and show only high-risk transactions (score >= 60)
+                const highRiskTxns = transactions.filter(t => {
+                    const risk = t.fraud_check?.risk_score || t.risk_score || 0;
+                    return risk >= 60;
+                }).slice(0, 10);
 
+                if (highRiskTxns.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">No high-risk transactions found</td></tr>';
+                    return;
+                }
+
+                highRiskTxns.forEach(txn => {
+                    const risk = txn.fraud_check?.risk_score || txn.risk_score || 0;
                     const row = document.createElement('tr');
-                    const riskClass = txn.risk_score > 85 ? 'critical' : (txn.risk_score > 60 ? 'high' : 'medium');
-                    const status = txn.decision || txn.status || 'Review';
-                    const statusClass = (status === 'Blocked' || status === 'BLOCKED') ? 'bg-danger' :
-                        ((status === 'Review' || status === 'REVIEW') ? 'bg-warning' : 'bg-success');
+                    const riskClass = risk >= 85 ? 'critical' : (risk >= 70 ? 'high' : 'medium');
+                    const status = txn.fraud_check?.status || txn.status || 'REVIEW';
+                    const statusClass = (status === 'BLOCKED') ? 'bg-danger' :
+                        ((status === 'REVIEW') ? 'bg-warning' : 'bg-success');
 
-                    // Map AI reasoning
-                    let reasonBadges = '<span class="badge bg-secondary">System Check</span>';
-                    if (txn.reasons && txn.reasons.length > 0) {
-                        reasonBadges = txn.reasons.slice(0, 2).map(r =>
-                            `<span class="badge bg-secondary me-1" title="${r}">${r.substring(0, 20)}...</span>`
-                        ).join('');
+                    // Extract risk factors from reasons
+                    const reasons = txn.fraud_check?.reasons || txn.reasons || [];
+                    let reasonBadges = '<span class="badge bg-secondary">No factors</span>';
+                    if (reasons.length > 0) {
+                        reasonBadges = reasons.slice(0, 2).map(r => {
+                            const shortReason = r.length > 20 ? r.substring(0, 20) + '...' : r;
+                            return `<span class="badge bg-warning me-1" title="${r}">${shortReason}</span>`;
+                        }).join('');
                     }
 
                     row.innerHTML = `
-                        <td><code>${txn.transaction_id || txn.id}</code></td>
-                        <td>${txn.customer || 'Unknown'}</td>
-                        <td class="fw-bold">$${txn.amount || '0.00'}</td>
-                        <td><span class="risk-badge ${riskClass}">${txn.risk_score || 0}</span></td>
+                        <td><code>${txn.transaction_id || txn.id || 'N/A'}</code></td>
+                        <td>${txn.from_email || txn.customer || 'Unknown'}</td>
+                        <td class="fw-bold">$${(txn.amount || 0).toFixed(2)}</td>
+                        <td><span class="risk-badge ${riskClass}">${risk}</span></td>
                         <td>${reasonBadges}</td>
                         <td><span class="badge ${statusClass}">${status}</span></td>
                         <td>
@@ -412,7 +459,13 @@
                     tbody.appendChild(row);
                 });
 
-            } catch (e) { console.error('Risk Data Errors:', e); }
+                console.log(`[RISK SCORING] Displayed ${highRiskTxns.length} high-risk transactions`);
+
+            } catch (e) {
+                console.error('Risk Data Errors:', e);
+                document.querySelector('tbody').innerHTML =
+                    '<tr><td colspan="7" class="text-center text-danger">Error loading risk data</td></tr>';
+            }
         }
 
         // Initialize empty charts
@@ -430,14 +483,14 @@
             options: { responsive: true, plugins: { legend: { display: false } } }
         });
 
-        // Mock Pie Chart for Categories (until backend provides real breakdown)
+        // Risk Categories Pie Chart
         const ctx2 = document.getElementById('riskCategoriesChart').getContext('2d');
-        new Chart(ctx2, {
+        window.riskCategoriesChart = new Chart(ctx2, {
             type: 'doughnut',
             data: {
-                labels: ['Account Takeover', 'Card-Not-Present', 'Velocity Spike', 'Geo-Anomaly'],
+                labels: ['Critical (85+)', 'High (60-84)', 'Medium (40-59)', 'Low (0-39)'],
                 datasets: [{
-                    data: [35, 25, 25, 15],
+                    data: [0, 0, 0, 0],
                     backgroundColor: ['#dc3545', '#ffc107', '#0dcaf0', '#198754']
                 }]
             },
@@ -445,7 +498,7 @@
         });
 
         fetchRiskData();
-        setInterval(fetchRiskData, 4000);
+        setInterval(fetchRiskData, 5000);
 
         // ✅ REAL BACKEND HANDLERS
         function handleConfigureRules() {

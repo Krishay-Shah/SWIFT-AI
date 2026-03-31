@@ -183,14 +183,79 @@ body {
     }
 }
 
-/* Responsive */
+/* Responsive Design Improvements */
+@media (max-width: 1200px) {
+    .container-fluid {
+        padding-left: 2rem !important;
+        padding-right: 2rem !important;
+    }
+}
+
 @media (max-width: 992px) {
     .navbar-nav {
-        padding: 1rem 0;
+        padding: 1.5rem 0;
+        text-align: center;
     }
 
     .nav-link {
-        margin: 0.25rem 0;
+        margin: 0.5rem 0;
+        font-size: 1.1rem;
+    }
+
+    .stat-card {
+        margin-bottom: 1rem;
+    }
+
+    .card-header h5 {
+        font-size: 1.1rem;
+    }
+}
+
+@media (max-width: 768px) {
+    .container-fluid {
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+    }
+
+    .stat-icon {
+        width: 50px;
+        height: 50px;
+        font-size: 1.4rem;
+    }
+
+    h2 {
+        font-size: 1.5rem;
+    }
+
+    .card {
+        margin-bottom: 1rem;
+    }
+
+    /* Stack charts on mobile */
+    .col-lg-8,
+    .col-lg-4,
+    .col-lg-6 {
+        width: 100%;
+    }
+
+    #fraudMap {
+        height: 300px !important;
+    }
+}
+
+@media (max-width: 576px) {
+    .navbar-brand span {
+        font-size: 1.2rem;
+    }
+
+    .btn-group-sm>.btn {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.75rem;
+    }
+
+    .dropdown-menu {
+        width: 100%;
+        text-align: center;
     }
 }
 

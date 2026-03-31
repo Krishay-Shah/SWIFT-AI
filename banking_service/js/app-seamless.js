@@ -78,20 +78,28 @@ function showNotification(title, message) {
 }
 
 function setupNavigation() {
-    const path = window.location.pathname.split('/').pop() || 'index.html';
+    let path = window.location.pathname.split('/').pop() || 'bank-portal';
+    if (path === '/') path = 'bank-portal';
+    // Remove .html from path if present (for local testing/fallback)
+    path = path.replace('.html', '');
+
     const navLinks = document.querySelectorAll('.nav-link, .dropdown-item');
 
     navLinks.forEach(link => {
-        const href = link.getAttribute('href');
-        if (href === path) {
+        let href = link.getAttribute('href');
+        if (!href) return;
+
+        // Clean href for comparison
+        let cleanHref = href.replace('.html', '');
+        if (cleanHref === '/') cleanHref = 'bank-portal';
+
+        if (cleanHref === path) {
             link.classList.add('active');
             const parent = link.closest('.dropdown');
             if (parent) {
                 const toggler = parent.querySelector('.dropdown-toggle');
                 if (toggler) toggler.classList.add('active');
             }
-        } else if (path === 'bank-portal.html' && href === '#') {
-            // Handle "More" dropdown when in bank portal if necessary
         } else {
             link.classList.remove('active');
         }

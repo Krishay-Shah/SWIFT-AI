@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import random
 import os
 import smtplib
+import requests
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -15,8 +16,9 @@ CORS(app)
 SMTP_SERVER = "smtp.gmail.com"
 FRAUD_API_URL = os.getenv("FRAUD_API_URL", "http://localhost:5001/analyze")
 SMTP_PORT = 587
-MAIL_USERNAME = "mkbharvad534@gmail.com"
-MAIL_PASSWORD = "dwtp fmiq miyl ccvq"
+MAIL_USERNAME = "smaulik557@gmail.com"
+MAIL_PASSWORD = "fpbx ebwd nqsq ifah"
+
 
 def send_email(to_email, subject, body):
     try:
@@ -24,8 +26,8 @@ def send_email(to_email, subject, body):
         msg['From'] = MAIL_USERNAME
         msg['To'] = to_email
         msg['Subject'] = subject
-        msg.attach(MIMEText(body, 'html')) # HTML for better formatting
-        
+        msg.attach(MIMEText(body, 'html'))  # HTML for better formatting
+
         server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
         server.starttls()
         server.login(MAIL_USERNAME, MAIL_PASSWORD)
@@ -39,17 +41,22 @@ def send_email(to_email, subject, body):
         return False
 
 # Error Handlers
+
+
 @app.errorhandler(404)
 def not_found(e):
     return send_from_directory('.', '404.html'), 404
+
 
 @app.errorhandler(500)
 def server_error(e):
     return jsonify({"error": "Internal server error"}), 500
 
+
 @app.errorhandler(504)
 def gateway_timeout(e):
     return send_from_directory('.', '504.html'), 504
+
 
 # Database Configuration
 # Database Configuration (Dedicated Banking DB)
@@ -59,12 +66,18 @@ db = client['banking_core_db']
 
 transactions_coll = db['transactions']
 customers_coll = db['customers']
+
+# Optional/Supplemental Collections
+alerts_coll = db['alerts']
+audit_coll = db['audit_logs']
 merchants_coll = db['merchants']
 bank_accounts_coll = db['bank_accounts']
 credit_cards_coll = db['credit_cards']
 audit_coll = db['audit_logs']
 
 # --- Helper Functions ---
+
+
 def log_audit(user, action, target, details=""):
     audit_coll.insert_one({
         "timestamp": datetime.utcnow(),
@@ -74,7 +87,19 @@ def log_audit(user, action, target, details=""):
         "details": details
     })
 
+
+def generate_account_number():
+    """Generate unique 16-digit account number"""
+    return f"{random.randint(1000000000000000, 9999999999999999)}"
+
+
+def generate_merchant_id():
+    """Generate unique merchant ID"""
+    return f"MERCH-{random.randint(100000, 999999)}"
+
 # --- PAYPAL WEBHOOK INTEGRATION ---
+
+
 @app.route('/api/paypal/webhook', methods=['POST'])
 def paypal_webhook():
     """
@@ -84,17 +109,19 @@ def paypal_webhook():
     try:
         data = request.json
         event_type = data.get('event_type')
-        
+
         # Handle payment completion
         if event_type == 'PAYMENT.SALE.COMPLETED':
             payment_data = data.get('resource', {})
-            
+
             # Extract transaction details
-            txn_id = payment_data.get('id', f"PP-{random.randint(100000, 999999)}")
+            txn_id = payment_data.get(
+                'id', f"PP-{random.randint(100000, 999999)}")
             amount = float(payment_data.get('amount', {}).get('total', 0))
             currency = payment_data.get('amount', {}).get('currency', 'USD')
-            payer_email = payment_data.get('payer', {}).get('email_address', 'Unknown')
-            
+            payer_email = payment_data.get(
+                'payer', {}).get('email_address', 'Unknown')
+
             # Calculate risk score via Microservice
             risk_score, reasoning = calculate_risk_score({
                 "amount": amount,
@@ -102,7 +129,7 @@ def paypal_webhook():
                 "customer": payer_email,
                 "merchant": "PayPal"
             })
-            
+
             # Save to database
             transaction = {
                 "id": txn_id,
@@ -119,198 +146,315 @@ def paypal_webhook():
                 "status": "Blocked" if risk_score > 85 else ("Review" if risk_score > 60 else "Approved")
             }
             transactions_coll.insert_one(transaction)
-            
+
             # Update customer profile
             customers_coll.update_one(
                 {"email": payer_email},
-                {"$inc": {"txn_count": 1, "total_spent": amount}, "$set": {"last_txn": datetime.utcnow(), "risk_score": risk_score}},
+                {"$inc": {"txn_count": 1, "total_spent": amount}, "$set": {
+                    "last_txn": datetime.utcnow(), "risk_score": risk_score}},
                 upsert=True
             )
-            
-            log_audit("PayPal", f"Transaction: {txn_id}", "PayPal", f"{amount} {currency}")
+
+            log_audit(
+                "PayPal", f"Transaction: {txn_id}", "PayPal", f"{amount} {currency}")
             return jsonify({"success": True})
-        
+
         return jsonify({"success": True, "message": "Event received"})
     except Exception as e:
         print(f"PayPal Error: {e}")
         return jsonify({"error": str(e)}), 500
 
 # --- AUTH ENDPOINTS WITH OTP ---
+
+
 @app.route('/api/auth/register', methods=['POST'])
 def register():
     data = request.json
     email = data.get('email')
-    
+    role = data.get('role', 'Customer')
+
+    # Check if user already exists
     if db['users'].find_one({"email": email}):
         return jsonify({"success": False, "message": "User already exists"})
-    
+
     user = {
         "name": data.get('name'),
         "email": email,
         "phone": data.get('phone'),
-        "password": data.get('password'), 
-        "role": data.get('role', 'Customer'),
+        "password": data.get('password'),
+        "role": role,
         "created_at": datetime.utcnow(),
         "status": "Active"
     }
     db['users'].insert_one(user)
-    
-    # Send Welcome Email
-    email_body = f"""
-    <h3>Welcome to Swift AI!</h3>
-    <p>Hello {user['name']},</p>
-    <p>Your account has been successfully created as <strong>{user['role']}</strong>.</p>
-    <p>Please login and link your credit card to start making payments.</p>
-    """
-    send_email(email, "Welcome to Swift AI Platform", email_body)
-    
-    log_audit("System", f"New User Registered: {email} ({user['role']})", "Auth", "Register")
+
+    # --- Role Specific Logic ---
+    if role == 'Merchant':
+        # Generate Merchant Credentials
+        merchant_id = generate_merchant_id()
+        account_number = generate_account_number()
+
+        merchant_record = {
+            "merchant_id": merchant_id,
+            "business_name": data.get('name'),
+            "email": email,
+            "account_number": account_number,
+            "status": "Active",
+            "created_at": datetime.utcnow(),
+            "total_revenue": 0
+        }
+        merchants_coll.insert_one(merchant_record)
+
+        # Send Merchant Welcome Email
+        email_body = f"""
+        <h3>Welcome to Swift Bank!</h3>
+        <p>Hello {data.get('name')},</p>
+        <p>Your merchant account has been successfully created.</p>
+        <p><strong>Merchant ID:</strong> {merchant_id}</p>
+        <p><strong>Account Number:</strong> {account_number}</p>
+        <p>You can now login to your dashboard and start accepting payments.</p>
+        """
+        send_email(email, "Merchant Registration Successful", email_body)
+
+    elif role == 'Customer':
+        # Ensure Customer Profile Exists
+        customer_record = {
+            "name": data.get('name'),
+            "email": email,
+            "account_number": generate_account_number(),
+            "balance": 1000,  # Initial Balance
+            "txn_count": 0,
+            "total_spent": 0,
+            "risk_score": 0,
+            "created_at": datetime.utcnow(),
+            "status": "Active"
+        }
+        customers_coll.insert_one(customer_record)
+
+        # Send Customer Welcome Email
+        email_body = f"""
+        <h3>Welcome to Swift Bank!</h3>
+        <p>Hello {data.get('name')},</p>
+        <p>Your account has been successfully created as <strong>{role}</strong>.</p>
+        <p>Please login and link your credit card to start making payments.</p>
+        """
+        send_email(email, "Welcome to Swift Bank Platform", email_body)
+
+    log_audit(
+        "System", f"New User Registered: {email} ({role})", "Auth", "Register")
     return jsonify({"success": True, "message": "Registration successful"})
+
 
 @app.route('/api/auth/login', methods=['POST'])
 def login():
     data = request.json
     email = data.get('email')
-    password = data.get('password') # Merchants don't have passwords in this simple flow, or we assume they do? 
+    # Merchants don't have passwords in this simple flow, or we assume they do?
+    password = data.get('password')
     # Actually, for this demo, merchants might not have passwords set up in 'register_merchant'.
     # Let's check: register_merchant creates a merchant object but NO PASSWORD field.
     # To fix this elegantly for the user without complex auth:
     # We will allow merchants to login just by Email for this demo (or assume a default password if needed).
     # OR, better: Check if it's a merchant, if so, generate OTP directly without password check (simulating "Login with OTP").
-    
+
     # 1. Check User (Customer/Admin) with Password
     user = db['users'].find_one({"email": email})
     if user:
         if user.get('password') == password:
             # Valid User
-            pass 
+            pass
         else:
             return jsonify({"success": False, "message": "Invalid credentials"})
     else:
         # 2. Check Merchant (No password required for this demo flow, just email)
         merchant = merchants_coll.find_one({"email": email})
         if merchant:
-            user = merchant # Treat merchant as user for OTP step
+            user = merchant  # Treat merchant as user for OTP step
         else:
-             return jsonify({"success": False, "message": "User not found"})
-    
+            return jsonify({"success": False, "message": "User not found"})
+
     # Generate 6-digit OTP
     otp = str(random.randint(100000, 999999))
-    
-    # Store OTP
-    db['otps'].insert_one({
-        "email": email,
-        "otp": otp,
-        "created_at": datetime.utcnow(),
-        "expires_at": datetime.utcnow() + timedelta(minutes=5)
-    })
-    
-    # Send OTP
-    name = user.get('name', user.get('business_name', 'User'))
-    email_body = f"""
-    <h3>Your Login OTP</h3>
-    <p>Hello {name},</p>
-    <p>Your OTP for login is: <strong style="font-size:24px; color:#dc3545;">{otp}</strong></p>
-    """
-    send_email(email, f"Swift AI Login OTP: {otp}", email_body)
-    
-    log_audit(email, "OTP Sent", "Auth", "OTP Generated")
-    return jsonify({"success": True, "message": "OTP sent to your email"})
+
+    # Store OTP with expiry (5 mins)
+    db['otps'].update_one(
+        {"email": email},
+        {"$set": {"otp": otp, "expires_at": datetime.utcnow() + timedelta(minutes=5)}},
+        upsert=True
+    )
+
+    # Send OTP Code (Email or Console)
+    print(f"🔐 LOGIN OTP for {email}: {otp}")
+    send_email(email, "Your Login OTP", f"Your OTP is: <b>{otp}</b>")
+
+    return jsonify({"success": True, "message": "OTP sent to email", "require_otp": True})
+
 
 @app.route('/api/auth/verify-otp', methods=['POST'])
 def verify_otp():
     data = request.json
     email = data.get('email')
     otp = data.get('otp')
-    
-    # Find valid OTP
-    otp_record = db['otps'].find_one({
-        "email": email,
-        "otp": otp,
-        "expires_at": {"$gt": datetime.utcnow()}
-    })
-    
-    if not otp_record:
-        return jsonify({"success": False, "message": "Invalid or expired OTP"})
-    
-    # Delete used OTP
-    db['otps'].delete_one({"_id": otp_record['_id']})
-    
-    # Get user details
-    role = "Customer"
-    user = db['users'].find_one({"email": email})
-    
-    if user:
-        name = user['name']
-        role = user['role']
-    else:
-        # Check Merchant
+
+    record = db['otps'].find_one({"email": email})
+
+    if record and record['otp'] == otp:
+        # Check expiry
+        if datetime.utcnow() > record['expires_at']:
+            return jsonify({"success": False, "message": "OTP expired"})
+
+        # Determine User Role & Name
+        user = db['users'].find_one({"email": email})
         merchant = merchants_coll.find_one({"email": email})
-        if merchant:
-            name = merchant['business_name']
-            role = "Merchant"
-        else:
-            return jsonify({"success": False, "message": "User record not found"})
-    
-    log_audit(email, f"Login Success ({role})", "Auth", "Login")
-    return jsonify({
-        "success": True,
-        "user": {
-            "name": name,
-            "email": email,
-            "role": role
-        }
+
+        user_data = {}
+        if user:
+            user_data = {
+                "name": user['name'],
+                "email": user['email'],
+                "role": user.get('role', 'Customer')
+            }
+        elif merchant:
+            user_data = {
+                "name": merchant['business_name'],
+                "email": merchant['email'],
+                "role": 'Merchant'
+            }
+
+        # Clear OTP
+        db['otps'].delete_one({"email": email})
+
+        log_audit(email, "Login Successful", "Auth", "Login")
+        return jsonify({"success": True, "user": user_data})
+
+    return jsonify({"success": False, "message": "Invalid OTP"})
+
+
+@app.route('/api/auth/forgot-password', methods=['POST'])
+def forgot_password():
+    data = request.json
+    email = data.get('email')
+
+    user = db['users'].find_one({"email": email})
+    if not user:
+        # Security: Return success even if user not found to prevent enumeration
+        return jsonify({"success": True, "message": "If an account exists, a reset link has been sent."})
+
+    # Generate Token
+    import uuid
+    token = str(uuid.uuid4())
+
+    # Store Token
+    db['users'].update_one(
+        {"email": email},
+        {"$set": {
+            "reset_token": token,
+            "reset_token_expires": datetime.utcnow() + timedelta(hours=1)
+        }}
+    )
+
+    # Construct Link
+    reset_link = f"http://localhost:5000/reset-password.html?token={token}"
+
+    # LOG TO CONSOLE (Simulation)
+    print("\n" + "="*50)
+    print(f"📧 PASSWORD RESET EMAIL SIMULATION")
+    print(f"To: {email}")
+    print(f"Link: {reset_link}")
+    print("="*50 + "\n")
+
+    # Attempt to send real email if configured
+    email_body = f"""
+    <h3>Password Reset Request</h3>
+    <p>Click the link below to reset your password:</p>
+    <p><a href="{reset_link}">Reset Password</a></p>
+    <p>If you did not request this, please ignore this email.</p>
+    """
+    send_email(email, "Password Reset Request", email_body)
+
+    return jsonify({"success": True, "message": "Reset link sent"})
+
+
+@app.route('/api/auth/reset-password', methods=['POST'])
+def reset_password():
+    data = request.json
+    token = data.get('token')
+    new_password = data.get('password')
+
+    user = db['users'].find_one({
+        "reset_token": token,
+        "reset_token_expires": {"$gt": datetime.utcnow()}  # Check not expired
     })
+
+    if not user:
+        return jsonify({"success": False, "message": "Invalid or expired token"})
+
+    # Update Password and Clear Token
+    db['users'].update_one(
+        {"_id": user['_id']},
+        {
+            "$set": {"password": new_password},
+            "$unset": {"reset_token": "", "reset_token_expires": ""}
+        }
+    )
+
+    log_audit(user['email'], "Password Reset Successfully", "Auth", "Reset")
+    return jsonify({"success": True, "message": "Password updated successfully"})
+
 
 @app.route('/api/auth/resend-otp', methods=['POST'])
 def resend_otp():
     data = request.json
     email = data.get('email')
-    
+
     user = db['users'].find_one({"email": email})
     if not user:
         return jsonify({"success": False, "message": "User not found"})
-    
+
     # Generate new OTP
     otp = str(random.randint(100000, 999999))
-    
+
     db['otps'].insert_one({
         "email": email,
         "otp": otp,
         "created_at": datetime.utcnow(),
         "expires_at": datetime.utcnow() + timedelta(minutes=5)
     })
-    
+
     email_body = f"""
     <h3>Your New Login OTP</h3>
     <p>Your OTP is: <strong style="font-size:24px; color:#dc3545;">{otp}</strong></p>
     <p>Valid for 5 minutes.</p>
     """
-    send_email(email, f"Swift AI OTP Resent: {otp}", email_body)
-    
+    send_email(email, f"Swift Bank OTP Resent: {otp}", email_body)
+
     return jsonify({"success": True, "message": "OTP resent"})
+
 
 # --- PROFILE MANAGEMENT ---
 @app.route('/api/profile', methods=['GET', 'POST'])
 def manage_profile():
     # For simulation, default to Admin or use query param
     email = request.args.get('email', "admin@swiftai.com")
-    
+
     if request.method == 'POST':
         data = request.json
-        email = data.get('email', email) # Allow updating email context if needed
-        
+        # Allow updating email context if needed
+        email = data.get('email', email)
+
         update_fields = {
             "name": data.get('name'),
             "phone": data.get('phone'),
             "location": data.get('location', 'Headquarters, Silicon Valley, CA'),
             "updated_at": datetime.utcnow()
         }
-        
-        result = db['users'].update_one({"email": email}, {"$set": update_fields}, upsert=True)
-        log_audit(email, "Updated Profile", "Profile", "User updated personal details")
+
+        result = db['users'].update_one(
+            {"email": email}, {"$set": update_fields}, upsert=True)
+        log_audit(email, "Updated Profile", "Profile",
+                  "User updated personal details")
         return jsonify({"success": True, "message": "Profile updated successfully"})
-        
+
     user = db['users'].find_one({"email": email})
     if not user:
         # Create default admin if missing
@@ -323,24 +467,12 @@ def manage_profile():
             "created_at": datetime.utcnow()
         }
         db['users'].insert_one(user)
-        
+
     user['_id'] = str(user['_id'])
     return jsonify(user)
 
 # --- BANK PORTAL ENDPOINTS ---
-@app.route('/api/bank/kyc', methods=['POST'])
-def submit_kyc():
-    data = request.json
-    record = {
-        "customer_id": data.get('customer_id'),
-        "name": data.get('name'),
-        "doc_type": data.get('doc_type'),
-        "status": "Submitted",
-        "submitted_at": datetime.utcnow()
-    }
-    db['kyc_records'].insert_one(record)
-    send_email(MAIL_USERNAME, "New KYC Submission", f"New KYC document submitted by {record['name']}")
-    return jsonify({"success": True, "message": "KYC Submitted"})
+
 
 @app.route('/api/kyc/verify', methods=['POST'])
 def verify_kyc():
@@ -348,9 +480,9 @@ def verify_kyc():
     name = data.get('name')
     # Simple logic for simulation: "Unknown" or "Hidden" triggers fraud
     is_fraud = "Unknown" in name or "Hidden" in data.get('country', '')
-    
+
     status = "Failed" if is_fraud else "Verified"
-    
+
     # Store record
     db['kyc_records'].insert_one({
         "name": name,
@@ -358,106 +490,202 @@ def verify_kyc():
         "status": status,
         "timestamp": datetime.utcnow()
     })
-    
+
     if status == "Failed":
         # Alert Admin
-        send_email(MAIL_USERNAME, "CRITICAL: KYC Alert", f"High Risk KYC Detected: {name}. System blocked verification.")
-        
+        send_email(MAIL_USERNAME, "CRITICAL: KYC Alert",
+                   f"High Risk KYC Detected: {name}. System blocked verification.")
+
     return jsonify({
         "status": status,
-        "details": { "document_check": "Forged" if is_fraud else "Valid" }
+        "details": {"document_check": "Forged" if is_fraud else "Valid"}
     })
 
 # --- AI CHATBOT ENDPOINT ---
+
+
 @app.route('/api/chat', methods=['POST'])
 def ai_chat():
     data = request.json
     msg = data.get('message', '').lower()
-    
+
     response_text = "I didn't understand that. Try asking about 'stats', 'blocked transactions', or a 'customer'."
-    
+
     try:
         if 'hello' in msg or 'hi' in msg:
             response_text = "Hello! I am Swift Assist. I can help you analyze fraud data. Try asking 'Show me today's stats'."
-            
+
         elif 'stat' in msg or 'overview' in msg:
             total = db['transactions'].count_documents({})
             blocked = db['transactions'].count_documents({"status": "Blocked"})
             response_text = f"Currently, we have processed {total} transactions. {blocked} have been blocked as fraudulent."
-            
+
         elif 'blocked' in msg:
-            recent_blocked = list(db['transactions'].find({"status": "Blocked"}).sort("timestamp", -1).limit(3))
+            recent_blocked = list(db['transactions'].find(
+                {"status": "Blocked"}).sort("timestamp", -1).limit(3))
             if recent_blocked:
-                details = ", ".join([f"{t.get('customer', 'Unknown')} (${t.get('amount')})" for t in recent_blocked])
+                details = ", ".join(
+                    [f"{t.get('customer', 'Unknown')} (${t.get('amount')})" for t in recent_blocked])
                 response_text = f"The last 3 blocked transactions were: {details}."
             else:
                 response_text = "No blocked transactions found recently."
-                
+
         elif 'customer' in msg or 'check' in msg:
             # Simple simulation: Extract name if possible, or just give general info
-            response_text = "To check a specific customer, please visit the Customers page or provide an ID. I can tell you that we have " + str(db['customers'].count_documents({})) + " active profiles."
-            
+            response_text = "To check a specific customer, please visit the Customers page or provide an ID. I can tell you that we have " + \
+                str(db['customers'].count_documents({})) + " active profiles."
+
         elif 'alert' in msg:
             pending = db['alerts'].count_documents({"status": "Pending"})
             response_text = f"There are currently {pending} pending alerts requiring your attention."
-            
+
         elif 'risk' in msg:
             response_text = "Global Risk Level is currently MODERATE based on recent velocity checks."
-            
+
     except Exception as e:
         response_text = "I encountered an error accessing the database."
 
     return jsonify({"response": response_text})
 
 
-
-import requests
-
 def calculate_risk_score(txn):
     """
     Delegate risk calculation to the external Fraud Detection Service.
+    Now constructs a rich 'Vesta-compatible' payload using feature importance fields.
     """
     try:
-        # Prepare payload for microservice
-        payload = {
-            "id": txn.get('id', 'UNKNOWN'),
-            "amount": txn.get('amount', 0),
-            "location": txn.get('location', 'Unknown'),
-            "merchant": txn.get('merchant', 'Unknown'),
-            "type": txn.get('type', 'Standard'),
-            "customer": txn.get('customer', 'Unknown')
-        }
-        
-        print(f"[FRAUD CHECK] Calling {FRAUD_API_URL} for transaction {payload['id']}")
-        response = requests.post(FRAUD_API_URL, json=payload, timeout=5)
-        
-        if response.status_code == 200:
-            result = response.json()
-            print(f"[FRAUD CHECK] ✅ Response: {result.get('status')} (Score: {result.get('risk_score')})")
-            # Return tuple to match existing signature for minimal refactoring impact
-            return result.get('risk_score', 0), ", ".join(result.get('reasons', []))
+        # 1. Fetch Historical Data & Context for Feature Engineering
+        customer_email = txn.get('customer') or txn.get('from_email')
+
+        # Default Aggregates
+        c1_count = 1  # Txn Count
+        d1_days = 0  # Days since account created
+        d2_days = 0  # Days since last txn
+
+        if customer_email:
+            # Fetch Customer Profile for Account Age (D1)
+            customer = customers_coll.find_one({"email": customer_email})
+            current_balance = 0
+            if customer:
+                current_balance = customer.get('balance', 0)
+                created_at = customer.get('created_at')
+                if created_at:
+                    # Handle string vs datetime
+                    if isinstance(created_at, str):
+                        try:
+                            created_at = datetime.fromisoformat(created_at)
+                        except:
+                            created_at = datetime.utcnow()
+                    d1_days = (datetime.utcnow() - created_at).days
+
+            # Fetch Transaction History for Counts (C Columns) & Velocities
+            # C1: Total transactions for this customer
+            c1_count = transactions_coll.count_documents(
+                {"from_email": customer_email}) + 1
+
+            # Additional Stats for "Complete View"
+            pipeline = [
+                {"$match": {"from_email": customer_email}},
+                {"$group": {
+                    "_id": None,
+                    "total_spend": {"$sum": "$amount"},
+                    "avg_spend": {"$avg": "$amount"}
+                }}
+            ]
+            agg = list(transactions_coll.aggregate(pipeline))
+            total_spend = agg[0]['total_spend'] if agg else 0
+            avg_spend = agg[0]['avg_spend'] if agg else 0
+
+            # Linked Cards
+            linked_cards_count = db['credit_cards'].count_documents(
+                {"user_email": customer_email})
+
+            # C2: Transactions today (Velocity)
+            start_of_day = datetime.utcnow().replace(
+                hour=0, minute=0, second=0, microsecond=0)
+            c2_count = transactions_coll.count_documents({
+                "from_email": customer_email,
+                "timestamp": {"$gte": start_of_day}
+            }) + 1
+
+            # D2: Days since last transaction
+            last_txn = transactions_coll.find_one(
+                {"from_email": customer_email},
+                sort=[("timestamp", -1)]
+            )
+            if last_txn and last_txn.get('timestamp'):
+                last_ts = last_txn['timestamp']
+                d2_days = (datetime.utcnow() - last_ts).days
         else:
-            print(f"[FRAUD CHECK] ❌ HTTP {response.status_code}: {response.text}")
-            
-    except requests.exceptions.ConnectionError as e:
-        print(f"⚠ Warning: Cannot connect to Fraud Service at {FRAUD_API_URL}")
-        print(f"   Make sure fraud service is running on port 5001")
-    except requests.exceptions.Timeout:
-        print(f"⚠ Warning: Fraud Service timeout")
+            c2_count = 1
+            total_spend = 0
+            avg_spend = 0
+            linked_cards_count = 0
+            current_balance = 0
+
+        # 2. Map Banking Data to New Model Schema
+        # The new model expects: amt, category, city, state, lat, long, timestamp
+
+        # Location Parsing
+        location_raw = txn.get('location', {})
+        location_data = {}
+
+        if isinstance(location_raw, dict):
+            location_data = location_raw
+        else:
+            # Parse string "City, State" or just "City"
+            parts = str(location_raw).split(',')
+            location_data['city'] = parts[0].strip()
+            if len(parts) > 1:
+                # Using country as state proxy
+                location_data['country'] = parts[1].strip()
+
+        timestamp_str = datetime.utcnow().isoformat()
+
+        payload = {
+            # Core Fields for New ML Model
+            "amount": float(txn.get('amount', 0)),
+            "category": txn.get('category', 'misc_net'),
+            "location": location_data,  # Use the object
+            "timestamp": timestamp_str,
+
+            # Identity / Enrichment (Optional but good for fallback)
+            "customer": customer_email,
+            "ip_address": txn.get('ip_address'),
+            "device": txn.get('device_type', 'Unknown'),
+
+            # Legacy/Derived Context (Still useful for rules)
+            "account_age_days": d1_days,
+            "txn_velocity_24h": c2_count,
+
+            # DEEP INSIGHTS (Requested by User)
+            "total_spend_lifetime": total_spend,
+            "avg_transaction_val": avg_spend,
+            "linked_cards": linked_cards_count,
+            "current_balance": current_balance
+        }
+
+        print(f"Sending Payload to Fraud Service: {payload}")
+
+        try:
+            response = requests.post(FRAUD_API_URL, json=payload, timeout=5.0)
+            if response.status_code == 200:
+                result = response.json()
+                return result.get('risk_score', 0), result.get('reasons', []), result
+            else:
+                print(f"Fraud Service Error: {response.status_code}")
+                return 0, ["Service Error"], {}
+        except Exception as e:
+            print(f"Fraud Service Exception: {e}")
+            return 0, ["Connection Failed"], {}
+
     except Exception as e:
-        print(f"⚠ Warning: Fraud Service error: {type(e).__name__}: {e}")
-        
+        print(f"Risk Calculation Error: {e}")
+        return 0, ["Internal Error"]
+
     # Fallback if service is down (Safe Default)
     return 0, "Fraud Service Unavailable (Approved by Default)"
 
-
-# --- Routes ---
-@app.route('/')
-def index(): return send_from_directory('.', 'index.html')
-
-@app.route('/<path:filename>')
-def serve_static(filename):
-    return send_from_directory('.', filename)
 
 # Location to Coordinates Mapping
 LOCATION_MAP = {
@@ -467,8 +695,32 @@ LOCATION_MAP = {
     "Dubai, UAE": [25.2048, 55.2708],
     "Lagos, Nigeria": [6.5244, 3.3792],
     "Tokyo, Japan": [35.6762, 139.6503],
-    "High Risk Zone": [34.5553, 69.2075] # Kabul (example)
+    "High Risk Zone": [34.5553, 69.2075]  # Kabul (example)
 }
+
+# --- Routes ---
+# --- Frontend Routes (Clean URLs) ---
+
+
+@app.route('/')
+def home():
+    return send_from_directory('.', 'bank-portal.html')
+
+
+@app.route('/<path:path>')
+def serve_page(path):
+    # Try directory/file as is first (for images, styles etc)
+    if os.path.exists(path) and not os.path.isdir(path):
+        return send_from_directory('.', path)
+
+    # Try adding .html for clean URLs
+    html_path = f"{path}.html"
+    if os.path.exists(html_path):
+        return send_from_directory('.', html_path)
+
+    # Default to 404
+    return send_from_directory('.', '404.html'), 404
+
 
 @app.route('/api/transactions/<txn_id>', methods=['GET'])
 def get_transaction(txn_id):
@@ -479,175 +731,68 @@ def get_transaction(txn_id):
     return jsonify({"error": "Transaction not found"}), 404
 
 # 1. Transactions & Simulation
-@app.route('/api/transactions', methods=['POST', 'GET'])
+
+
+@app.route('/api/transactions', methods=['GET'])
 def manage_transactions():
-    if request.method == 'POST':
-        data = request.json
-        txn_id = data.get('id', f"TXN-{random.randint(100000, 999999)}")
-        risk_score, reasoning = calculate_risk_score(data)
-        
-        location_name = data.get('location', 'Globe')
-        coords = LOCATION_MAP.get(location_name, [random.uniform(-60, 60), random.uniform(-120, 120)])
-
-        transaction = {
-            "id": txn_id,
-            "customer": data.get('customer', 'Unknown'),
-            "amount": float(data.get('amount', 0)),
-            "location": location_name,
-            "coords": coords,
-            "channel": data.get('channel', 'Web'),
-            "type": data.get('type', 'Credit'),
-            "timestamp": datetime.utcnow(),
-            "risk_score": risk_score,
-            "ai_reason": reasoning,
-            "status": "Blocked" if risk_score > 85 else ("Review" if risk_score > 60 else "Approved")
-        }
-        transactions_coll.insert_one(transaction)
-        
-        # Sync Customer Profile
-        customers_coll.update_one(
-            {"name": transaction['customer']},
-            {"$inc": {"txn_count": 1, "total_spent": transaction['amount']}, 
-             "$set": {"last_txn": datetime.utcnow(), "risk_score": risk_score}},
-            upsert=True
-        )
-
-        # No local alert creation - handled by Fraud Service if needed or just logged
-        
-        transaction['_id'] = str(transaction['_id'])
-        return jsonify(transaction)
-    
     # GET with Filters
     status = request.args.get('status')
-    query = {"status": status} if status and status != 'All' else {}
-    txns = list(transactions_coll.find(query).sort("timestamp", -1).limit(50))
-    for t in txns: t['_id'] = str(t['_id'])
+    customer = request.args.get('customer')
+
+    query = {}
+
+    # Build customer filter
+    if customer:
+        customer_filter = {
+            '$or': [
+                {'customer': customer},
+                {'from_email': customer},
+                {'user_email': customer}
+            ]
+        }
+        query.update(customer_filter)
+
+    # Add status filter if specified
+    if status and status != 'All':
+        query['status'] = status
+
+    print(f"[API] Transaction query: {query}")  # Debug log
+    txns = list(transactions_coll.find(query).sort(
+        "timestamp", -1).limit(100))  # Increased limit
+    for t in txns:
+        t['_id'] = str(t['_id'])
+
+    print(f"[API] Found {len(txns)} transactions")  # Debug log
     return jsonify(txns)
 
-# Admin Dashboard Logic Removed (Moved to Fraud Service)
+# Customer Profile Management
 
-# Duplicate KYC verify removed
-
-
-
-# 11. Integrations Management - See line 573 for complete CRUD implementation
-
-# 12. User Management - See line 626 for complete implementation with invitations
-
-# 13. Customer Profile Management
-
-# Duplicate profile management removed (Consolidated at top)
-
-@app.route('/api/profile/photo', methods=['POST'])
-def upload_profile_photo():
-    if 'photo' not in request.files:
-        return jsonify({"error": "No photo uploaded"}), 400
-    
-    file = request.files['photo']
-    if file.filename == '':
-        return jsonify({"error": "No file selected"}), 400
-    
-    # Save file (in production, use cloud storage like S3)
-    filename = f"profile_{datetime.utcnow().timestamp()}.jpg"
-    filepath = os.path.join('uploads', filename)
-    os.makedirs('uploads', exist_ok=True)
-    file.save(filepath)
-    
-    photo_url = f"/uploads/{filename}"
-    # Use 'users' collection
-    db['users'].update_one(
-        {"email": "admin@swiftai.com"},
-        {"$set": {"photo": photo_url}},
-        upsert=True
-    )
-    log_audit("Admin", "Uploaded Profile Photo", "Profile", filename)
-    return jsonify({"success": True, "photo_url": photo_url})
 
 @app.route('/api/profile/password', methods=['POST'])
 def change_password():
     data = request.json
+    email = data.get('email')
     current_password = data.get('current_password')
     new_password = data.get('new_password')
-    
-    # Use 'users' collection
-    db['users'].update_one(
-        {"email": "admin@swiftai.com"},
-        {"$set": {"password_updated_at": datetime.utcnow()}},
-        upsert=True
+
+    if not email:
+        return jsonify({"success": False, "message": "Email is required"}), 400
+
+    # Retrieve user (from customers collection primarily for banking)
+    # Using 'customers' since 'users' is for admin/fraud service mostly
+    result = customers_coll.update_one(
+        {"email": email},
+        {"$set": {
+            "password": new_password,  # In prod, hash this!
+            "password_updated_at": datetime.utcnow()
+        }}
     )
-    log_audit("Admin", "Changed Password", "Security", "Password updated")
+
+    if result.matched_count == 0:
+        return jsonify({"success": False, "message": "User not found"}), 404
+
+    log_audit(email, "Changed Password", "Security", "Password updated")
     return jsonify({"success": True, "message": "Password changed successfully"})
-
-@app.route('/api/export/<data_type>', methods=['POST'])
-def export_generic_data(data_type):
-    data = request.json
-    export_record = {
-        "type": data_type,
-        "format": data.get('format', 'PDF'),
-        "filters": data.get('filters', {}),
-        "exported_at": datetime.utcnow(),
-        "status": "Completed"
-    }
-    db['exports'].insert_one(export_record)
-    log_audit("Admin", f"Exported {data_type} Report", "Exports", "Generated")
-    
-    # Return a download URL that points to our generic download handler
-    return jsonify({
-        "success": True, 
-        "export": str(export_record),  # Convert to string just in case
-        "download_url": f"/api/reports/download/{str(export_record['_id'])}" # Re-use report download logic for now
-    })
-
-# 17. Audit Logs with Export & Filtering
-
-@app.route('/api/audit/export/pdf', methods=['POST'])
-def export_audit_pdf():
-    data = request.json
-    filters = data.get('filters', {})
-    
-    # Create export record
-    export_record = {
-        "type": "audit_logs",
-        "format": "PDF",
-        "filters": filters,
-        "exported_at": datetime.utcnow(),
-        "status": "Completed",
-        "record_count": audit_coll.count_documents(filters)
-    }
-    result = db['exports'].insert_one(export_record)
-    export_id = str(result.inserted_id)
-    
-    log_audit("Admin", "Exported Audit Logs", "Audit", f"PDF export with {export_record['record_count']} records")
-    return jsonify({"success": True, "export_id": export_id, "download_url": f"/api/audit/download/pdf/{export_id}"})
-
-@app.route('/api/audit/export/csv', methods=['POST'])
-def export_audit_csv():
-    data = request.json
-    filters = data.get('filters', {})
-    
-    export_record = {
-        "type": "audit_logs",
-        "format": "CSV",
-        "filters": filters,
-        "exported_at": datetime.utcnow(),
-        "status": "Completed",
-        "record_count": audit_coll.count_documents(filters)
-    }
-    result = db['exports'].insert_one(export_record)
-    export_id = str(result.inserted_id)
-    
-    log_audit("Admin", "Exported Audit Logs", "Audit", f"CSV export with {export_record['record_count']} records")
-    return jsonify({"success": True, "export_id": export_id, "download_url": f"/api/audit/download/csv/{export_id}"})
-
-@app.route('/api/audit/download/<format>/<export_id>', methods=['GET'])
-def download_audit_export(format, export_id):
-    content = f"Audit Logs Export ({format.upper()})\n\nExport ID: {export_id}\n\nGenerated: {datetime.utcnow()}\n\n[Log Data Redacted for Demo]"
-    
-    return Response(
-        content,
-        mimetype="text/plain",
-        headers={"Content-disposition": f"attachment; filename=audit_logs_{export_id}.{format.lower() if format != 'PDF' else 'txt'}"}
-    )
 
 
 # 19. User Management with Invitations
@@ -658,88 +803,132 @@ def serve_upload(filename):
     return send_from_directory('uploads', filename)
 
 # 21. Transaction Actions (Approve/Block/Review)
+
+
 @app.route('/api/transactions/<txn_id>/approve', methods=['POST'])
 def approve_transaction(txn_id):
-    transactions_coll.update_one({"id": txn_id}, {"$set": {"status": "Approved"}})
-    log_audit("Admin", f"Approved Transaction: {txn_id}", "Transactions", "Approved")
+    transactions_coll.update_one(
+        {"id": txn_id}, {"$set": {"status": "Approved"}})
+    log_audit(
+        "Admin", f"Approved Transaction: {txn_id}", "Transactions", "Approved")
     return jsonify({"success": True, "message": "Transaction approved"})
+
 
 @app.route('/api/transactions/<txn_id>/block', methods=['POST'])
 def block_transaction(txn_id):
-    transactions_coll.update_one({"id": txn_id}, {"$set": {"status": "Blocked"}})
-    log_audit("Admin", f"Blocked Transaction: {txn_id}", "Transactions", "Blocked")
+    transactions_coll.update_one(
+        {"id": txn_id}, {"$set": {"status": "Blocked"}})
+    log_audit(
+        "Admin", f"Blocked Transaction: {txn_id}", "Transactions", "Blocked")
     return jsonify({"success": True, "message": "Transaction blocked"})
+
 
 @app.route('/api/transactions/<txn_id>/review', methods=['POST'])
 def review_transaction(txn_id):
-    transactions_coll.update_one({"id": txn_id}, {"$set": {"status": "Review"}})
-    log_audit("Admin", f"Sent Transaction to Review: {txn_id}", "Transactions", "Review")
+    transactions_coll.update_one(
+        {"id": txn_id}, {"$set": {"status": "Review"}})
+    log_audit(
+        "Admin", f"Sent Transaction to Review: {txn_id}", "Transactions", "Review")
     return jsonify({"success": True, "message": "Transaction sent to review"})
 
 # 22. Customer Detail & Management
+
+
 @app.route('/api/customers/<customer_id>', methods=['GET', 'PUT'])
 def manage_customer_detail(customer_id):
     if request.method == 'GET':
         # Search by Email OR Name
-        customer = customers_coll.find_one({"$or": [{"email": customer_id}, {"name": customer_id}]})
+        customer = customers_coll.find_one(
+            {"$or": [{"email": customer_id}, {"name": customer_id}]})
         if not customer:
-            # If not found, try to return a default structure for new users so the dashboard doesn't break
-            return jsonify({
-                "name": customer_id.split('@')[0] if '@' in customer_id else customer_id,
-                "email": customer_id if '@' in customer_id else "",
+            # Create persistent profile for new user so data can be saved/updated
+            is_email = '@' in customer_id
+            new_profile = {
+                "account_number": generate_account_number(),
+                "name": customer_id.split('@')[0] if is_email else customer_id,
+                "email": customer_id if is_email else "",
+                "phone": "",
                 "txn_count": 0,
                 "total_spent": 0,
-                "risk_score": 0
-            })
+                "risk_score": 0,
+                "balance": 1000,  # Initial balance for testing
+                "created_at": datetime.utcnow(),
+                "status": "Active"
+            }
+            customers_coll.insert_one(new_profile)
+            new_profile['_id'] = str(new_profile['_id'])
+            return jsonify(new_profile)
+
+        # Auto-generate account number for existing customers who don't have one
+        if not customer.get('account_number'):
+            account_num = generate_account_number()
+            customers_coll.update_one(
+                {"_id": customer['_id']},
+                {"$set": {"account_number": account_num}}
+            )
+            customer['account_number'] = account_num
+
         customer['_id'] = str(customer['_id'])
         return jsonify(customer)
-    
+
     # UPDATE
     data = request.json
     customers_coll.update_one(
         {"$or": [{"email": customer_id}, {"name": customer_id}]},
         {"$set": {
-            "name": data.get('name', customer_id), # Ensure name is set if updating
+            # Ensure name is set if updating
+            "name": data.get('name', customer_id),
             "phone": data.get('phone'),
             "updated_at": datetime.utcnow()
         }},
-        upsert=True # Create if doesn't exist to ensure profile availability
+        upsert=True  # Create if doesn't exist to ensure profile availability
     )
-    log_audit("Admin", f"Updated Customer: {customer_id}", "Customers", "Modified")
+    log_audit(
+        "Admin", f"Updated Customer: {customer_id}", "Customers", "Modified")
     return jsonify({"success": True, "message": "Customer updated"})
+
 
 @app.route('/api/customers/<customer_id>/transactions', methods=['GET'])
 def get_customer_transactions(customer_id):
-    txns = list(transactions_coll.find({"customer": customer_id}).sort("timestamp", -1).limit(50))
+    query = {"$or": [{"customer": customer_id}, {
+        "from_email": customer_id}, {"user_email": customer_id}]}
+    txns = list(transactions_coll.find(query).sort("timestamp", -1).limit(50))
     for t in txns:
         t['_id'] = str(t['_id'])
     return jsonify(txns)
 
+
 @app.route('/api/customers/<customer_id>/alerts', methods=['GET'])
 def get_customer_alerts(customer_id):
-    alerts = list(alerts_coll.find({"customer": customer_id}).sort("timestamp", -1).limit(20))
+    alerts = list(alerts_coll.find(
+        {"customer": customer_id}).sort("timestamp", -1).limit(20))
     for a in alerts:
         a['_id'] = str(a['_id'])
     return jsonify(alerts)
 
+
 @app.route('/api/customers/<customer_id>/block', methods=['POST'])
 def block_customer(customer_id):
-    customers_coll.update_one({"name": customer_id}, {"$set": {"status": "Blocked"}})
-    log_audit("Admin", f"Blocked Customer: {customer_id}", "Customers", "Blocked")
+    customers_coll.update_one({"name": customer_id}, {
+                              "$set": {"status": "Blocked"}})
+    log_audit(
+        "Admin", f"Blocked Customer: {customer_id}", "Customers", "Blocked")
     return jsonify({"success": True, "message": "Customer blocked"})
 
 # 23. Alert Detail & Actions
+
+
 @app.route('/api/alerts/<alert_id>', methods=['GET', 'PUT'])
 def manage_alert_detail(alert_id):
     from bson import ObjectId
-    
+
     if request.method == 'GET':
         alert = alerts_coll.find_one({"_id": ObjectId(alert_id)})
         if not alert:
             return jsonify({"error": "Alert not found"}), 404
         alert['_id'] = str(alert['_id'])
         return jsonify(alert)
-    
+
     # UPDATE
     data = request.json
     alerts_coll.update_one(
@@ -753,15 +942,18 @@ def manage_alert_detail(alert_id):
     log_audit("Admin", f"Updated Alert: {alert_id}", "Alerts", "Modified")
     return jsonify({"success": True, "message": "Alert updated"})
 
+
 @app.route('/api/alerts/<alert_id>/escalate', methods=['POST'])
 def escalate_alert(alert_id):
     from bson import ObjectId
     alerts_coll.update_one(
         {"_id": ObjectId(alert_id)},
-        {"$set": {"severity": "Critical", "escalated": True, "escalated_at": datetime.utcnow()}}
+        {"$set": {"severity": "Critical", "escalated": True,
+                  "escalated_at": datetime.utcnow()}}
     )
     log_audit("Admin", f"Escalated Alert: {alert_id}", "Alerts", "Escalated")
     return jsonify({"success": True, "message": "Alert escalated"})
+
 
 @app.route('/api/alerts/<alert_id>/assign', methods=['POST'])
 def assign_alert(alert_id):
@@ -769,9 +961,11 @@ def assign_alert(alert_id):
     data = request.json
     alerts_coll.update_one(
         {"_id": ObjectId(alert_id)},
-        {"$set": {"assigned_to": data.get('user_id'), "assigned_at": datetime.utcnow()}}
+        {"$set": {"assigned_to": data.get(
+            'user_id'), "assigned_at": datetime.utcnow()}}
     )
-    log_audit("Admin", f"Assigned Alert: {alert_id} to {data.get('user_id')}", "Alerts", "Assigned")
+    log_audit(
+        "Admin", f"Assigned Alert: {alert_id} to {data.get('user_id')}", "Alerts", "Assigned")
     return jsonify({"success": True, "message": "Alert assigned"})
 
 
@@ -779,16 +973,16 @@ def assign_alert(alert_id):
 @app.route('/api/merchants/register', methods=['POST'])
 def register_merchant():
     data = request.json
-    
+
     # Check if merchant already exists
     if merchants_coll.find_one({"email": data.get('email')}):
         return jsonify({"success": False, "message": "Merchant already registered"})
-    
+
     # Generate API key
     import secrets
     api_key = f"sk_live_{secrets.token_urlsafe(32)}"
-    merchant_id = f"MERCH-{random.randint(100000, 999999)}"
-    
+    merchant_id = generate_merchant_id()
+
     merchant = {
         "merchant_id": merchant_id,
         "business_name": data.get('business_name'),
@@ -808,22 +1002,24 @@ def register_merchant():
         "blocked_count": 0,
         "fraud_prevented_amount": 0
     }
-    
+
     merchants_coll.insert_one(merchant)
-    
+
     # Send welcome email
     email_body = f"""
-    <h3>Welcome to Swift AI Fraud Protection!</h3>
+    <h3>Welcome to Swift Bank!</h3>
     <p>Hello {merchant['business_name']},</p>
     <p>Your merchant account has been successfully created.</p>
     <p><strong>Merchant ID:</strong> {merchant_id}</p>
     <p><strong>API Key:</strong> {api_key}</p>
     <p>Keep your API key secure. You'll need it for integration.</p>
     """
-    send_email(data.get('email'), "Welcome to Swift AI", email_body)
-    
-    log_audit("System", f"Merchant Registered: {merchant_id}", "Merchant", merchant['business_name'])
+    send_email(data.get('email'), "Welcome to Swift Bank", email_body)
+
+    log_audit(
+        "System", f"Merchant Registered: {merchant_id}", "Merchant", merchant['business_name'])
     return jsonify({"success": True, "merchant_id": merchant_id, "api_key": api_key})
+
 
 @app.route('/api/merchants/<merchant_id>', methods=['GET'])
 def get_merchant(merchant_id):
@@ -833,11 +1029,15 @@ def get_merchant(merchant_id):
         return jsonify(merchant)
     return jsonify({"error": "Merchant not found"}), 404
 
+
 @app.route('/api/merchants/<merchant_id>/transactions', methods=['GET'])
 def get_merchant_transactions(merchant_id):
-    txns = list(transactions_coll.find({"merchant_id": merchant_id}).sort("timestamp", -1).limit(50))
-    for t in txns: t['_id'] = str(t['_id'])
+    txns = list(transactions_coll.find(
+        {"merchant_id": merchant_id}).sort("timestamp", -1).limit(50))
+    for t in txns:
+        t['_id'] = str(t['_id'])
     return jsonify(txns)
+
 
 @app.route('/api/merchants/email/<email>', methods=['GET'])
 def get_merchant_by_email(email):
@@ -847,122 +1047,22 @@ def get_merchant_by_email(email):
         return jsonify(merchant)
     return jsonify({"error": "Merchant not found"}), 404
 
-@app.route('/api/fraud-check', methods=['POST'])
-def fraud_check():
-    """
-    Real-time fraud detection for merchant transactions
-    Called BEFORE payment is processed
-    """
-    data = request.json
-    
-    # Verify API key (in production)
-    # api_key = request.headers.get('Authorization', '').replace('Bearer ', '')
-    
-    customer_email = data.get('customer_email')
-    amount = float(data.get('amount', 0))
-    merchant_id = data.get('merchant_id')
-    
-    # Get customer history
-    customer = customers_coll.find_one({"email": customer_email}) or {}
-    avg_amount = customer.get('avg_amount', 100)
-    txn_count = customer.get('txn_count', 0)
-    
-    # Calculate risk score
-    risk_score = 0
-    reasons = []
-    
-    # Amount anomaly
-    if amount > avg_amount * 3:
-        risk_score += 30
-        reasons.append(f"Amount ${amount} is 3x higher than average ${avg_amount}")
-    
-    # New customer
-    if txn_count == 0:
-        risk_score += 20
-        reasons.append("New customer - no transaction history")
-    
-    # High amount
-    if amount > 10000:
-        risk_score += 25
-        reasons.append(f"High transaction amount: ${amount}")
-    
-    # Location check (simplified)
-    location = data.get('location', '')
-    if 'Nigeria' in location or 'Russia' in location:  # Example high-risk countries
-        risk_score += 30
-        reasons.append(f"High-risk location: {location}")
-    
-    # Device check
-    device = data.get('device', '')
-    if 'Unknown' in device:
-        risk_score += 15
-        reasons.append("Unknown device")
-    
-    # Determine status
-    if risk_score >= 85:
-        status = "BLOCKED"
-        decision = "Transaction blocked due to high fraud risk"
-    elif risk_score >= 60:
-        status = "REVIEW"
-        decision = "Transaction requires manual review"
-    else:
-        status = "APPROVED"
-        decision = "Transaction approved"
-    
-    # Generate transaction ID
-    txn_id = f"TXN-{random.randint(100000, 999999)}"
-    
-    # Save transaction
-    transaction = {
-        "transaction_id": txn_id,
-        "merchant_id": merchant_id,
-        "customer_email": customer_email,
-        "amount": amount,
-        "currency": data.get('currency', 'USD'),
-        "location": location,
-        "device": device,
-        "channel": "Merchant",
-        "risk_score": risk_score,
-        "status": status,
-        "fraud_check_reasons": reasons,
-        "timestamp": datetime.utcnow()
-    }
-    transactions_coll.insert_one(transaction)
-    
-    # Update merchant stats
-    if status == "APPROVED":
-        merchants_coll.update_one(
-            {"merchant_id": merchant_id},
-            {"$inc": {"total_sales": amount, "approved_count": 1}}
-        )
-    elif status == "BLOCKED":
-        merchants_coll.update_one(
-            {"merchant_id": merchant_id},
-            {"$inc": {"blocked_count": 1, "fraud_prevented_amount": amount}}
-        )
-    
-    # Create alert if high risk
-    if risk_score >= 60:
-        alerts_coll.insert_one({
-            "transaction_id": txn_id,
-            "merchant_id": merchant_id,
-            "customer": customer_email,
-            "risk_score": risk_score,
-            "severity": "Critical" if risk_score >= 85 else "High",
-            "status": "New",
-            "timestamp": datetime.utcnow()
-        })
-    
-    log_audit(merchant_id, f"Fraud Check: {txn_id}", "FraudCheck", f"Score: {risk_score}, Status: {status}")
-    
-    return jsonify({
-        "success": True,
-        "transaction_id": txn_id,
-        "status": status,
-        "risk_score": risk_score,
-        "decision": decision,
-        "reasons": reasons
-    })
+
+@app.route('/api/merchants/search', methods=['GET'])
+def search_merchants():
+    query = request.args.get('q', '')
+    if not query:
+        return jsonify([])
+
+    # Case-insensitive search for business name
+    merchants = list(merchants_coll.find(
+        {"business_name": {"$regex": query, "$options": "i"}},
+        {"_id": 0, "business_name": 1, "email": 1,
+            "merchant_id": 1, "account_number": 1}
+    ).limit(10))
+
+    return jsonify(merchants)
+
 
 # --- BANK ACCOUNT SYSTEM ---
 @app.route('/api/bank/create-account', methods=['POST'])
@@ -971,15 +1071,15 @@ def create_bank_account():
     email = data.get('email')
     user_type = data.get('user_type', 'Customer')
     initial_balance = float(data.get('initial_balance', 10000))
-    
+
     # Check if account already exists
     existing = bank_accounts_coll.find_one({"user_email": email})
     if existing:
         return jsonify({"success": False, "message": "Account already exists"})
-    
+
     # Generate account number
     account_number = f"{random.randint(1000000000, 9999999999)}"
-    
+
     account = {
         "account_id": f"ACC-{random.randint(100000, 999999)}",
         "user_email": email,
@@ -992,19 +1092,44 @@ def create_bank_account():
         "created_at": datetime.utcnow(),
         "last_updated": datetime.utcnow()
     }
-    
+
     bank_accounts_coll.insert_one(account)
-    log_audit(email, "Bank Account Created", "Bank", f"Account: {account_number}")
-    
+    log_audit(email, "Bank Account Created",
+              "Bank", f"Account: {account_number}")
+
     return jsonify({"success": True, "account_number": account_number, "balance": initial_balance})
+
 
 @app.route('/api/bank/account/<email>', methods=['GET'])
 def get_bank_account(email):
+    # 1. Check dedicated bank accounts collection
     account = bank_accounts_coll.find_one({"user_email": email})
     if account:
         account['_id'] = str(account['_id'])
         return jsonify(account)
+
+    # 2. Check Merchant Profile
+    merchant = merchants_coll.find_one({"email": email})
+    if merchant:
+        return jsonify({
+            "account_number": merchant.get('account_number'),
+            "balance": merchant.get('total_revenue', 0),
+            "status": "Active",
+            "type": "Merchant"
+        })
+
+    # 3. Check Customer Profile
+    customer = customers_coll.find_one({"email": email})
+    if customer:
+        return jsonify({
+            "account_number": customer.get('account_number'),
+            "balance": customer.get('balance', 0),
+            "status": "Active",
+            "type": "Customer"
+        })
+
     return jsonify({"error": "Account not found"}), 404
+
 
 @app.route('/api/bank/transfer', methods=['POST'])
 def bank_transfer():
@@ -1013,13 +1138,13 @@ def bank_transfer():
     Enhanced with IP, location, device, and session tracking
     """
     data = request.json
-    
+
     from_email = data.get('from_email')
     to_email = data.get('to_email')
     amount = float(data.get('amount', 0))
     category = data.get('category', 'Other')
     description = data.get('description', '')
-    
+
     # Enhanced data
     card_id = data.get('card_id')
     card_type = data.get('card_type', 'Unknown')
@@ -1028,69 +1153,221 @@ def bank_transfer():
     location = data.get('location', {})
     device = data.get('device', {})
     session = data.get('session', {})
-    
-    # 1. Verify Sender (Must have Credit Card)
-    card = credit_cards_coll.find_one({"card_id": card_id}) if card_id else credit_cards_coll.find_one({"user_email": from_email})
-    if not card:
-        return jsonify({"success": False, "message": "No linked credit card found. Please link a card."}), 400
+
+    # 1. Verify Sender (Credit Card OR Debit Card)
+    is_debit = card_id == 'DEBIT_CARD'
+    card = None
+
+    if is_debit:
+        # Check Customer Balance logic
+        customer = customers_coll.find_one({"email": from_email})
+        if not customer:
+            return jsonify({"success": False, "message": "Customer account not found"}), 404
+
+        current_balance = customer.get('balance', 0)
+        card_type = "Debit Card"
+        last_4 = customer.get('account_number', '0000')[-4:]
+
+        if current_balance < amount:
+            # REPORT TO FRAUD SERVICE
+            print(
+                f"[PAYMENT] ❌ Insufficient funds (Debit). Reporting to Fraud Service...")
+            calculate_risk_score({
+                "id": f"FAIL-{random.randint(100000, 999999)}",
+                "amount": amount,
+                "merchant": to_email,
+                "customer": from_email,
+                "type": "Insufficient Funds",
+                "status": "Blocked",
+                "location": location.get('city', 'Unknown'),
+                "ip_address": ip_address,
+                "device_type": device.get('type', 'Unknown'),
+                "reasons": ["Insufficient funds", "Potential high-value fraud attempt"]
+            })
+            # Return as BLOCKED so frontend shows the Red Blocked UI
+            blocked_txn_id = f"BLK-{random.randint(100000, 999999)}"
+            transactions_coll.insert_one({
+                "transaction_id": blocked_txn_id,
+                "from_email": from_email,
+                "to_email": to_email,
+                "amount": amount,
+                "currency": "USD",
+                "category": category,
+                "description": f"Failed Transfer: {description}",
+                "location": location.get('city', 'Online'),
+                "ip_address": ip_address,
+                "device": {"type": device.get('type', 'Unknown')},
+                "fraud_check": {
+                    "status": "BLOCKED",
+                    "risk_score": 0,
+                    "reasons": ["Insufficient funds (Debit)"],
+                    "checked_at": datetime.utcnow()
+                },
+                "status": "BLOCKED",
+                "timestamp": datetime.utcnow()
+            })
+
+            return jsonify({
+                "success": False,
+                "status": "BLOCKED",
+                "risk_score": 0,
+                "decision": "Transaction blocked: Insufficient Funds",
+                "reasons": ["Insufficient funds in account/card.", "Debit account balance too low."],
+                "transaction_id": blocked_txn_id
+            })
+
+    else:
+        # Credit Card Logic
+        card = credit_cards_coll.find_one(
+            {"card_id": card_id}) if card_id else credit_cards_coll.find_one({"user_email": from_email})
+        if not card:
+            return jsonify({"success": False, "message": "No linked credit card found. Please link a card."}), 400
+
+        # 1.1 Check Credit Limit (Mock Check)
+        limit = card.get('limit', 5000.0)
+        spent = card.get('current_spent', 0.0)
+        if spent + amount > limit:
+            # REPORT TO FRAUD SERVICE
+            print(f"[PAYMENT] ❌ Insufficient funds. Reporting to Fraud Service...")
+            score, reasons, raw_json = calculate_risk_score({
+                "id": f"FAIL-{random.randint(100000, 999999)}",
+                "amount": amount,
+                "merchant": to_email,
+                "customer": from_email,
+                "type": "Insufficient Funds",
+                "status": "Blocked",
+                "location": location.get('city', 'Unknown'),
+                "ip_address": ip_address,
+                "device_type": device.get('type', 'Unknown'),
+                "reasons": ["Insufficient funds", "Potential high-value fraud attempt"]
+            })
+            # Return as BLOCKED so frontend shows the Red Blocked UI
+            blocked_txn_id = f"BLK-{random.randint(100000, 999999)}"
+            transactions_coll.insert_one({
+                "transaction_id": blocked_txn_id,
+                "from_email": from_email,
+                "to_email": to_email,
+                "amount": amount,
+                "currency": "USD",
+                "category": category,
+                "description": f"Failed Transfer: {description}",
+                "location": location.get('city', 'Online'),
+                "ip_address": ip_address,
+                "device": {"type": device.get('type', 'Unknown')},
+                "fraud_check": {
+                    "status": "BLOCKED",
+                    "risk_score": 0,
+                    "reasons": ["Insufficient funds (Credit)"],
+                    "checked_at": datetime.utcnow()
+                },
+                "status": "BLOCKED",
+                "timestamp": datetime.utcnow()
+            })
+
+            return jsonify({
+                "success": False,
+                "status": "BLOCKED",
+                "risk_score": 0,
+                "decision": "Transaction blocked: Insufficient Funds",
+                "reasons": ["Insufficient funds in account/card.", "Credit limit exceeded."],
+                "transaction_id": blocked_txn_id
+            })
 
     # 1.0 Verify Recipient (Must be a valid user or merchant)
-    recipient = merchants_coll.find_one({"email": to_email}) or customers_coll.find_one({"email": to_email})
+    # Support both email and account number
+    recipient_identifier = to_email
+
+    # Check if it's an account number (16 digits) or email
+    if recipient_identifier.isdigit() and len(recipient_identifier) == 16:
+        # It's an account number
+        recipient = customers_coll.find_one(
+            {"account_number": recipient_identifier})
+        if recipient:
+            # Use the email for further processing
+            to_email = recipient.get('email')
+            print(
+                f"[PAYMENT] ✓ Recipient found by account number: {recipient_identifier} → {to_email}")
+    else:
+        # It's an email
+        recipient = merchants_coll.find_one(
+            {"email": to_email}) or customers_coll.find_one({"email": to_email})
+
     if not recipient:
         # REPORT TO FRAUD SERVICE BEFORE RETURNING ERROR
-        print(f"[PAYMENT] ❌ Recipient '{to_email}' not found. Reporting to Fraud Service...")
-        calculate_risk_score({
+        print(
+            f"[PAYMENT] ❌ Recipient '{recipient_identifier}' not found. Reporting to Fraud Service...")
+        score, reasons, raw_json = calculate_risk_score({
             "id": f"FAIL-{random.randint(100000, 999999)}",
             "amount": amount,
-            "merchant": to_email, # The invalid email
+            "merchant": recipient_identifier,  # The invalid identifier
             "customer": from_email,
-            "type": "Invalid Recipient",
-            "status": "Blocked", # Explicitly mark as Blocked
+            "type": "Validation Failure",  # Changed from Invalid Recipient
+            "status": "Blocked",
             "location": location.get('city', 'Unknown'),
             "ip_address": ip_address,
             "device_type": device.get('type', 'Unknown'),
             "reasons": ["Attempt transfer to non-existent recipient", "Potential Account Enumeration"]
         })
-        return jsonify({"success": False, "message": f"Recipient '{to_email}' not found. Please check the email address."}), 400
-    
-    # 1.1 Check Credit Limit (Mock Check as requested)
-    limit = card.get('limit', 5000.0) # Default mock limit
-    spent = card.get('current_spent', 0.0)
-    if spent + amount > limit:
-         # REPORT TO FRAUD SERVICE
-         print(f"[PAYMENT] ❌ Insufficient funds. Reporting to Fraud Service...")
-         calculate_risk_score({
-            "id": f"FAIL-{random.randint(100000, 999999)}",
+
+        # SAVE TO DB AS BLOCKED (So it shows in Dashboard)
+        blocked_txn_id = f"BLK-{random.randint(100000, 999999)}"
+        city = location.get('city', 'Unknown')
+        country = location.get('country', 'Unknown')
+        blocked_transaction = {
+            "transaction_id": blocked_txn_id,
+            "from_email": from_email,
+            "to_email": recipient_identifier,  # The invalid input
             "amount": amount,
-            "merchant": to_email,
-            "customer": from_email,
-            "type": "Insufficient Funds",
-            "status": "Blocked",
-            "location": location.get('city', 'Unknown'),
+            "currency": "USD",
+            "category": category,
+            "description": f"Failed Transfer: {description}",
+            "location": f"{city}, {country}",
             "ip_address": ip_address,
-            "device_type": device.get('type', 'Unknown'),
-            "reasons": ["Insufficient funds", "Potential high-value fraud attempt"]
-         })
-         return jsonify({"success": False, "message": f"Insufficient funds. Credit Limit: ${limit}, Available: ${limit - spent}"}), 400
-    
+            "device": {"type": device.get('type', 'Unknown')},
+            "fraud_check": {
+                "status": "BLOCKED",
+                "risk_score": 0,
+                "reasons": ["Recipient account does not exist"],
+                "checked_at": datetime.utcnow()
+            },
+            "status": "BLOCKED",  # Important for History
+            "timestamp": datetime.utcnow()
+        }
+        transactions_coll.insert_one(blocked_transaction)
+        log_audit(
+            from_email, f"Payment Blocked: {blocked_txn_id}", "Payment", "Invalid Recipient")
+
+        # Return as BLOCKED so frontend shows the Red Blocked UI
+        return jsonify({
+            "success": False,
+            "status": "BLOCKED",
+            "risk_score": 0,
+            "decision": "Transaction blocked: Invalid Recipient",
+            "reasons": [f"Recipient account '{recipient_identifier}' does not exist.", "Security Policy: Transaction Halted"],
+            "transaction_id": blocked_txn_id
+        })
+
     # 2. FRAUD CHECK via Fraud Service (Enhanced)
-    print(f"\n[PAYMENT] Processing transfer {from_email} → {to_email}: ${amount}")
-    print(f"[PAYMENT] IP: {ip_address}, Location: {location.get('city', 'Unknown')}, {location.get('country', 'Unknown')}")
-    print(f"[PAYMENT] Device: {device.get('type', 'Unknown')}, Card: {card_type} ****{last_4}")
-    
+    print(
+        f"\n[PAYMENT] Processing transfer {from_email} → {to_email}: ${amount}")
+    print(
+        f"[PAYMENT] IP: {ip_address}, Location: {location.get('city', 'Unknown')}, {location.get('country', 'Unknown')}")
+    print(
+        f"[PAYMENT] Device: {device.get('type', 'Unknown')}, Card: {card_type} ****{last_4}")
+
     # Fetch customer stats for context
     customer_profile = customers_coll.find_one({"email": from_email}) or {}
 
     # Call fraud service with enhanced data
-    risk_score, reasoning = calculate_risk_score({
+    risk_score, reasoning, full_analysis = calculate_risk_score({
         "id": f"TXN-{random.randint(100000, 999999)}",
         "amount": amount,
         "merchant": to_email,
-        "location": location.get('city', 'Online'),
+        "location": location,  # Pass full object for extraction
         "customer": from_email,
         "type": "Transfer",
         "category": category,
-        
+
         # Enhanced fields
         "ip_address": ip_address,
         "country": location.get('country', 'Unknown'),
@@ -1101,17 +1378,32 @@ def bank_transfer():
         "os": device.get('os', 'Unknown'),
         "card_type": card_type,
         "timezone": session.get('timezone', 'UTC'),
-        
+
         # User History Context
         "user_txn_count": customer_profile.get('txn_count', 0),
         "user_total_spent": customer_profile.get('total_spent', 0),
         "user_risk_score": customer_profile.get('risk_score', 0),
         "account_created_at": str(customer_profile.get('created_at', datetime.utcnow().isoformat()))
     })
-    
+
     # Parse reasons
-    reasons = reasoning.split(", ") if reasoning else []
-    
+    # Parse reasons (Handle list vs string from updated fraud service)
+    if isinstance(reasoning, list):
+        reasons = reasoning
+    elif isinstance(reasoning, str):
+        reasons = reasoning.split(", ") if reasoning else []
+    else:
+        reasons = []
+
+    # LOGGING: Confirm Receipt of Decision
+    decision_status = 'BLOCKED' if risk_score >= 85 else (
+        'REVIEW' if risk_score >= 60 else 'APPROVED')
+    print(f"[PROOF] 📩 Fraud Response Received:")
+    print(f"   > Risk Score: {risk_score}")
+    print(f"   > Decision:   {decision_status}")
+    print(f"   > Reasons:    {reasons}")
+    print("-" * 50)
+
     # Determine status based on fraud service response
     if risk_score >= 85:
         status = "BLOCKED"
@@ -1122,26 +1414,35 @@ def bank_transfer():
     else:
         status = "APPROVED"
         decision = "Transaction approved"
-    
+
     # Generate transaction ID
     txn_id = f"TXN-{random.randint(100000, 999999)}"
-    
+
     # 3. Process Payment
     if status == "APPROVED":
-        # Credit Merchant (Update Stats if it is a merchant)
         # Credit Merchant (Update Stats if it is a merchant)
         merchants_coll.update_one(
             {"email": to_email},
             {"$inc": {"total_sales": amount, "approved_count": 1}}
         )
-        
-        # Debited from Card (Update Spent)
-        credit_cards_coll.update_one(
-            {"card_id": card.get('card_id', card_id)},
-            {"$inc": {"current_spent": amount}}
-        )
-        
+
+        # Debut Funds
+        if is_debit:
+            customers_coll.update_one(
+                {"email": from_email},
+                {"$inc": {"balance": -amount}}  # Deduct from balance
+            )
+        else:
+            # Debited from Card (Update Spent)
+            credit_cards_coll.update_one(
+                {"card_id": card.get('card_id', card_id)},
+                {"$inc": {"current_spent": amount}}
+            )
+
         # Save Transaction (Enhanced)
+        city = location.get('city', 'Unknown')
+        country = location.get('country', 'Unknown')
+
         transaction = {
             "transaction_id": txn_id,
             "from_email": from_email,
@@ -1150,23 +1451,23 @@ def bank_transfer():
             "currency": "USD",
             "category": category,
             "description": description,
-            
+
             # Location & IP
-            "location": location.get('city', 'Online'),
-            "country": location.get('country', 'Unknown'),
+            "location": f"{city}, {country}",
+            "country": country,
             "ip_address": ip_address,
             "latitude": location.get('latitude', 0),
             "longitude": location.get('longitude', 0),
             "channel": "Web",
-            
+
             # Card details
             "payment_method": {
-                "type": "Credit Card",
-                "card_id": card.get('card_id', card_id),
-                "last_4": card.get('last_4', last_4),
-                "card_type": card.get('card_type', card_type)
+                "type": "Debit Card" if is_debit else "Credit Card",
+                "card_id": "DEBIT" if is_debit else card.get('card_id', card_id),
+                "last_4": last_4,
+                "card_type": card_type
             },
-            
+
             # Device & Session
             "device": {
                 "type": device.get('type', 'Unknown'),
@@ -1177,7 +1478,7 @@ def bank_transfer():
                 "timezone": session.get('timezone', 'UTC'),
                 "language": session.get('language', 'en')
             },
-            
+
             # Fraud check results
             "fraud_check": {
                 "status": status,
@@ -1188,8 +1489,15 @@ def bank_transfer():
             "status": "COMPLETED",
             "timestamp": datetime.utcnow()
         }
+
+        # Add Order ID for merchant payments
+        if data.get('is_merchant_payment'):
+            transaction['order_id'] = f"ORD-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}"
+            # Force category for merchant payments if not set
+            transaction['category'] = 'Shopping'
+
         transactions_coll.insert_one(transaction)
-        
+
         # Update Customer Stats
         customers_coll.update_one(
             {"email": from_email},
@@ -1199,9 +1507,10 @@ def bank_transfer():
             },
             upsert=True
         )
-        
-        log_audit(from_email, f"Payment: {txn_id}", "Payment", f"${amount} to {to_email}")
-        
+
+        log_audit(from_email, f"Payment: {txn_id}",
+                  "Payment", f"${amount} to {to_email}")
+
         return jsonify({
             "success": True,
             "transaction_id": txn_id,
@@ -1210,9 +1519,12 @@ def bank_transfer():
             "decision": decision,
             "message": "Payment successful"
         })
-    
+
     else:
         # BLOCKED or REVIEW (Enhanced)
+        city = location.get('city', 'Unknown')
+        country = location.get('country', 'Unknown')
+
         transaction = {
             "transaction_id": txn_id,
             "from_email": from_email,
@@ -1221,23 +1533,23 @@ def bank_transfer():
             "currency": "USD",
             "category": category,
             "description": description,
-            
+
             # Location & IP
-            "location": location.get('city', 'Online'),
-            "country": location.get('country', 'Unknown'),
+            "location": f"{city}, {country}",
+            "country": country,
             "ip_address": ip_address,
             "latitude": location.get('latitude', 0),
             "longitude": location.get('longitude', 0),
             "channel": "Web",
-            
+
             # Card details
             "payment_method": {
-                "type": "Credit Card",
-                "card_id": card.get('card_id', card_id),
-                "last_4": card.get('last_4', last_4),
-                "card_type": card.get('card_type', card_type)
+                "type": "Debit Card" if is_debit else "Credit Card",
+                "card_id": "DEBIT" if is_debit else card.get('card_id', card_id),
+                "last_4": last_4,
+                "card_type": card_type
             },
-            
+
             # Device & Session
             "device": {
                 "type": device.get('type', 'Unknown'),
@@ -1248,7 +1560,7 @@ def bank_transfer():
                 "timezone": session.get('timezone', 'UTC'),
                 "language": session.get('language', 'en')
             },
-            
+
             # Fraud check results
             "fraud_check": {
                 "status": status,
@@ -1260,7 +1572,7 @@ def bank_transfer():
             "timestamp": datetime.utcnow()
         }
         transactions_coll.insert_one(transaction)
-        
+
         # Create alert
         if risk_score >= 60:
             alerts_coll.insert_one({
@@ -1271,9 +1583,10 @@ def bank_transfer():
                 "status": "New",
                 "timestamp": datetime.utcnow()
             })
-        
-        log_audit(from_email, f"Payment {status}: {txn_id}", "Payment", f"Risk: {risk_score}")
-        
+
+        log_audit(
+            from_email, f"Payment {status}: {txn_id}", "Payment", f"Risk: {risk_score}")
+
         return jsonify({
             "success": False,
             "transaction_id": txn_id,
@@ -1283,41 +1596,45 @@ def bank_transfer():
             "reasons": reasons
         })
 
+
 @app.route('/api/bank/add-money', methods=['POST'])
 def add_money():
     """Simulate adding money to account"""
     data = request.json
     email = data.get('email')
     amount = float(data.get('amount', 0))
-    
+
     account = bank_accounts_coll.find_one({"user_email": email})
     if not account:
         return jsonify({"success": False, "message": "Account not found"}), 404
-    
+
     new_balance = account['balance'] + amount
     bank_accounts_coll.update_one(
         {"user_email": email},
         {"$set": {"balance": new_balance, "last_updated": datetime.utcnow()}}
     )
-    
+
     log_audit(email, "Money Added", "Bank", f"${amount}")
     return jsonify({"success": True, "new_balance": new_balance})
 
 # --- CREDIT CARD SYSTEM ---
+
+
 @app.route('/api/cards/link', methods=['POST'])
 def link_credit_card():
     """Link a credit card to user account"""
     data = request.json
     email = data.get('email')
-    
+
     # Check if card already exists
     card_number = data.get('card_number')
     last_4 = card_number[-4:] if len(card_number) >= 4 else card_number
-    
-    existing = credit_cards_coll.find_one({"user_email": email, "last_4": last_4})
+
+    existing = credit_cards_coll.find_one(
+        {"user_email": email, "last_4": last_4})
     if existing:
         return jsonify({"success": False, "message": "Card already linked"})
-    
+
     card = {
         "card_id": f"CARD-{random.randint(100000, 999999)}",
         "user_email": email,
@@ -1333,16 +1650,17 @@ def link_credit_card():
         "status": "Active",
         "linked_at": datetime.utcnow()
     }
-    
+
     credit_cards_coll.insert_one(card)
     log_audit(email, "Credit Card Linked", "Card", f"****{last_4}")
-    
+
     return jsonify({"success": True, "message": "Card linked successfully", "card_id": card['card_id']})
+
 
 @app.route('/api/cards/<email>', methods=['GET'])
 def get_user_cards(email):
     """Get all cards for a user"""
-    print(f"Fetching cards for: {email}") # DEBUG
+    print(f"Fetching cards for: {email}")  # DEBUG
     cards = list(credit_cards_coll.find({"user_email": email}))
     for card in cards:
         card['_id'] = str(card['_id'])
@@ -1350,6 +1668,7 @@ def get_user_cards(email):
         card['card_number'] = f"****-****-****-{card['last_4']}"
         del card['cvv']  # Never send CVV
     return jsonify(cards)
+
 
 @app.route('/api/cards/delete/<card_id>', methods=['DELETE'])
 def delete_card(card_id):
@@ -1369,10 +1688,10 @@ def add_balance():
     data = request.json
     customer_email = data.get('customer_email')
     amount = float(data.get('amount', 0))
-    
+
     if amount <= 0:
         return jsonify({"error": "Invalid amount"}), 400
-    
+
     # Update customer balance
     customers_coll.update_one(
         {"email": customer_email},
@@ -1382,11 +1701,11 @@ def add_balance():
         },
         upsert=True
     )
-    
+
     # Get updated balance
     customer = customers_coll.find_one({"email": customer_email})
     new_balance = customer.get('balance', 0) if customer else amount
-    
+
     # Log transaction
     balance_txn = {
         "id": f"BAL-{random.randint(100000, 999999)}",
@@ -1398,9 +1717,9 @@ def add_balance():
         "status": "Completed"
     }
     transactions_coll.insert_one(balance_txn)
-    
+
     log_audit(customer_email, "Added Balance", "Account", f"Added ${amount}")
-    
+
     return jsonify({
         "success": True,
         "message": f"${amount} added successfully",
@@ -1413,10 +1732,10 @@ def add_balance():
 def check_balance():
     """Check customer balance"""
     customer_email = request.args.get('customer_email')
-    
+
     customer = customers_coll.find_one({"email": customer_email})
     balance = customer.get('balance', 0) if customer else 0
-    
+
     return jsonify({
         "customer": customer_email,
         "balance": balance,
@@ -1424,110 +1743,14 @@ def check_balance():
     })
 
 
-@app.route('/api/payment/process', methods=['POST'])
-def process_payment():
-    """Process payment with balance deduction and fraud check"""
-    data = request.json
-    
-    customer_email = data.get('customer_email')
-    amount = float(data.get('amount', 0))
-    merchant = data.get('merchant', 'Unknown Merchant')
-    description = data.get('description', '')
-    
-    # Check customer balance
-    customer = customers_coll.find_one({"email": customer_email})
-    if not customer:
-        return jsonify({"error": "Customer not found"}), 404
-    
-    current_balance = customer.get('balance', 0)
-    
-    if current_balance < amount:
-        return jsonify({
-            "error": "Insufficient balance",
-            "current_balance": current_balance,
-            "required": amount
-        }), 400
-    
-    # Generate transaction ID
-    txn_id = f"PAY-{random.randint(100000, 999999)}"
-    
-    # Fraud check
-    print(f"\n[PAYMENT] Processing payment {txn_id} for ${amount}")
-    risk_score, reasoning = calculate_risk_score({
-        "id": txn_id,
-        "amount": amount,
-        "merchant": merchant,
-        "location": customer.get('location', 'Unknown'),
-        "customer": customer_email,
-        "type": "Payment"
-    })
-    
-    # Determine status based on risk
-    if risk_score > 85:
-        status = "Blocked"
-        action = "Payment blocked due to high fraud risk"
-    elif risk_score > 60:
-        status = "Review"
-        action = "Payment under review"
-    else:
-        status = "Approved"
-        action = "Payment successful"
-        
-        # Deduct balance only if approved
-        new_balance = current_balance - amount
-        customers_coll.update_one(
-            {"email": customer_email},
-            {
-                "$set": {"balance": new_balance, "last_updated": datetime.utcnow()},
-                "$inc": {"total_spent": amount, "txn_count": 1}
-            }
-        )
-    
-    # Create transaction record
-    transaction = {
-        "id": txn_id,
-        "customer": customer_email,
-        "merchant": merchant,
-        "description": description,
-        "amount": amount,
-        "previous_balance": current_balance,
-        "new_balance": current_balance - amount if status == "Approved" else current_balance,
-        "type": "Payment",
-        "channel": "Web",
-        "location": customer.get('location', 'Unknown'),
-        "coords": [0, 0],
-        "timestamp": datetime.utcnow(),
-        "risk_score": risk_score,
-        "ai_reason": reasoning,
-        "status": status
-    }
-    
-    transactions_coll.insert_one(transaction)
-    transaction['_id'] = str(transaction['_id'])
-    
-    log_audit(customer_email, "Payment Processed", "Transaction", f"{status}: ${amount} to {merchant}")
-    
-    # Generate receipt if approved
-    receipt_url = None
-    if status == "Approved":
-        receipt_url = f"/api/receipt/{txn_id}"
-    
-    return jsonify({
-        "success": status == "Approved",
-        "transaction": transaction,
-        "message": action,
-        "receipt_url": receipt_url
-    })
-
-
 @app.route('/api/receipt/<txn_id>', methods=['GET'])
 def get_receipt(txn_id):
     """Generate and return receipt for transaction"""
     transaction = transactions_coll.find_one({"id": txn_id})
-    
+
     if not transaction:
         return jsonify({"error": "Transaction not found"}), 404
-    
+
     # Generate receipt HTML
     receipt_html = f"""
     <!DOCTYPE html>
@@ -1628,7 +1851,7 @@ def get_receipt(txn_id):
     <body>
         <div class="receipt">
             <div class="header">
-                <h1>🏦 Swift AI Banking</h1>
+                <h1>🏦 Swift Bank</h1>
                 <p style="color: #666; margin: 10px 0;">Payment Receipt</p>
                 <span class="status approved">{transaction['status']}</span>
             </div>
@@ -1678,17 +1901,120 @@ def get_receipt(txn_id):
             
             <div class="footer">
                 <p>This is a computer-generated receipt and does not require a signature.</p>
-                <p>Protected by AI-powered fraud detection | Swift AI Banking © 2026</p>
+                <p>Protected by AI-powered fraud detection | Swift Bank © 2026</p>
                 <p>Transaction secured with end-to-end encryption</p>
             </div>
         </div>
     </body>
     </html>
     """
-    
+
     return receipt_html
 
 
+# --- ACCOUNT DASHBOARD APIs ---
+@app.route('/api/account/summary', methods=['GET'])
+def get_account_summary():
+    """Get comprehensive account summary for dashboard"""
+    email = request.args.get('email')
+
+    if not email:
+        return jsonify({"error": "Email parameter required"}), 400
+
+    # Get customer data
+    customer = customers_coll.find_one({"email": email})
+
+    # Check Merchant if not Customer
+    if not customer:
+        merchant = merchants_coll.find_one({"email": email})
+        if merchant:
+            return jsonify({
+                "account_number": merchant.get('account_number', 'N/A'),
+                "balance": merchant.get('total_revenue', 0),
+                "total_credit_limit": 0,
+                "available_credit": 0,
+                "total_spent": 0,
+                "account_status": merchant.get('status', 'Active'),
+                "member_since": merchant.get('created_at'),
+                "customer_name": merchant.get('business_name', 'Merchant'),
+                "email": merchant.get('email'),
+                "phone": merchant.get('phone', ''),
+                "total_transactions": transactions_coll.count_documents({"merchant": email}),
+                "approved_transactions": merchant.get('approved_count', 0),
+                "blocked_transactions": merchant.get('blocked_count', 0),
+                "review_transactions": 0,
+                "linked_cards_count": 0,
+                "is_merchant": True
+            })
+        return jsonify({"error": "User not found"}), 404
+
+    # Get linked cards
+    cards = list(credit_cards_coll.find({"user_email": email}))
+
+    # Calculate credit totals
+    total_credit_limit = sum(card.get('limit', 0) for card in cards)
+    total_spent = sum(card.get('current_spent', 0) for card in cards)
+    available_credit = total_credit_limit - total_spent
+
+    # Get transaction stats
+    total_transactions = transactions_coll.count_documents({
+        "$or": [{"customer": email}, {"from_email": email}]
+    })
+
+    # Get recent transaction count by status
+    approved_count = transactions_coll.count_documents({
+        "$or": [{"customer": email}, {"from_email": email}],
+        "status": {"$in": ["Approved", "APPROVED"]}
+    })
+
+    blocked_count = transactions_coll.count_documents({
+        "$or": [{"customer": email}, {"from_email": email}],
+        "status": {"$in": ["Blocked", "BLOCKED"]}
+    })
+
+    review_count = transactions_coll.count_documents({
+        "$or": [{"customer": email}, {"from_email": email}],
+        "status": {"$in": ["Review", "REVIEW"]}
+    })
+
+    return jsonify({
+        "account_number": customer.get('account_number', 'N/A'),
+        "balance": customer.get('balance', 0),
+        "total_credit_limit": total_credit_limit,
+        "available_credit": available_credit,
+        "total_spent": total_spent,
+        "account_status": customer.get('status', 'Active'),
+        "member_since": customer.get('created_at'),
+        "customer_name": customer.get('name', 'Customer'),
+        "email": customer.get('email'),
+        "phone": customer.get('phone', ''),
+        "total_transactions": total_transactions,
+        "approved_transactions": approved_count,
+        "blocked_transactions": blocked_count,
+        "review_transactions": review_count,
+        "linked_cards_count": len(cards)
+    })
+
+
+@app.route('/api/account/recent-transactions', methods=['GET'])
+def get_recent_transactions():
+    """Get recent transactions for account dashboard"""
+    email = request.args.get('email')
+    limit = int(request.args.get('limit', 10))
+
+    if not email:
+        return jsonify({"error": "Email parameter required"}), 400
+
+    query = {"$or": [{"customer": email}, {"from_email": email}]}
+    txns = list(transactions_coll.find(
+        query).sort("timestamp", -1).limit(limit))
+
+    for t in txns:
+        t['_id'] = str(t['_id'])
+
+    return jsonify(txns)
+
+
 if __name__ == '__main__':
-    print("--- Swift AI World-Class Backend Running ---")
+    print("--- Swift Bank World-Class Backend Running ---")
     app.run(host='0.0.0.0', port=5000, debug=True)

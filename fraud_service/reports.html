@@ -293,68 +293,303 @@
         });
 
         async function fetchReports() {
+            // Show available report types (not stored reports, but generate on-demand)
+            const tbody = document.querySelector('tbody');
+            tbody.innerHTML = `
+                <tr>
+                    <td class="ps-4"><strong>All Transactions Report</strong></td>
+                    <td>${new Date().toLocaleDateString()}</td>
+                    <td>
+                        <span class="badge bg-success me-1">CSV</span>
+                        <span class="badge bg-danger">PDF</span>
+                    </td>
+                    <td>-</td>
+                    <td class="text-end pe-4">
+                        <button class="btn btn-sm btn-success me-1" onclick="downloadTransactionsCSV()" title="Download CSV">
+                            <i class="fas fa-file-csv"></i>
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="downloadTransactionsPDF()" title="Download PDF">
+                            <i class="fas fa-file-pdf"></i>
+                        </button>
+                    </td>
+                </tr>
+                <tr>
+                    <td class="ps-4"><strong>Fraud Transactions Report</strong></td>
+                    <td>${new Date().toLocaleDateString()}</td>
+                    <td>
+                        <span class="badge bg-success me-1">CSV</span>
+                        <span class="badge bg-danger">PDF</span>
+                    </td>
+                    <td>-</td>
+                    <td class="text-end pe-4">
+                        <button class="btn btn-sm btn-success me-1" onclick="downloadFraudCSV()" title="Download CSV">
+                            <i class="fas fa-file-csv"></i>
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="downloadFraudPDF()" title="Download PDF">
+                            <i class="fas fa-file-pdf"></i>
+                        </button>
+                    </td>
+                </tr>
+                <tr>
+                    <td class="ps-4"><strong>Customer Analytics Report</strong></td>
+                    <td>${new Date().toLocaleDateString()}</td>
+                    <td>
+                        <span class="badge bg-success me-1">CSV</span>
+                        <span class="badge bg-danger">PDF</span>
+                    </td>
+                    <td>-</td>
+                    <td class="text-end pe-4">
+                        <button class="btn btn-sm btn-success me-1" onclick="downloadCustomersCSV()" title="Download CSV">
+                            <i class="fas fa-file-csv"></i>
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="downloadCustomersPDF()" title="Download PDF">
+                            <i class="fas fa-file-pdf"></i>
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }
+
+        async function downloadTransactionsCSV() {
             try {
-                const response = await fetch('/api/reports');
-                const reports = await response.json();
+                // Fetch all transactions
+                const response = await fetch(`${window.location.protocol}//${window.location.hostname}:5000/api/transactions?limit=1000`);
+                const transactions = await response.json();
 
-                const tbody = document.querySelector('tbody');
-                tbody.innerHTML = '';
+                console.log(`[REPORTS] Fetched ${transactions.length} transactions for CSV`);
 
-                if (reports.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="5" class="text-center py-4 text-muted">No reports generated yet.</td></tr>';
-                    return;
-                }
+                // Create CSV content
+                let csv = 'Transaction ID,From,To,Amount,Category,Status,Risk Score,Date,Location,IP Address\n';
 
-                reports.forEach(report => {
-                    const row = document.createElement('tr');
-                    const badges = { 'PDF': 'bg-danger', 'CSV': 'bg-success', 'Excel': 'bg-primary' };
-                    // Fix date format
-                    let dateStr = report.generated_at;
-                    try { dateStr = new Date(report.generated_at).toISOString().split('T')[0]; } catch (e) { }
+                transactions.forEach(txn => {
+                    const txnId = txn.transaction_id || txn.id || 'N/A';
+                    const from = txn.from_email || txn.customer || 'N/A';
+                    const to = txn.to_email || txn.merchant || 'N/A';
+                    const amount = txn.amount || 0;
+                    const category = txn.category || 'Other';
+                    const status = txn.fraud_check?.status || txn.status || 'COMPLETED';
+                    const riskScore = txn.fraud_check?.risk_score || txn.risk_score || 0;
+                    const date = new Date(txn.timestamp).toLocaleString();
+                    const location = txn.location || 'Online';
+                    const ip = txn.ip_address || 'N/A';
 
-                    row.innerHTML = `
-                        <td class="ps-4"><strong>${report.name || 'Untitled Report'}</strong></td>
-                        <td>${dateStr}</td>
-                        <td><span class="badge ${badges[report.type] || 'bg-secondary'}">${report.type}</span></td>
-                        <td>${(Math.random() * 5 + 1).toFixed(1)} MB</td>
-                        <td class="text-end pe-4">
-                            <button class="btn btn-sm btn-light" onclick="window.open('/api/reports/download/${report._id}')">
-                                <i class="fas fa-download"></i>
-                            </button>
-                        </td>
-                    `;
-                    tbody.appendChild(row);
+                    csv += `"${txnId}","${from}","${to}",${amount},"${category}","${status}",${riskScore},"${date}","${location}","${ip}"\n`;
                 });
-            } catch (e) { console.error("Reports Error", e); }
+
+                // Download CSV
+                downloadCSV(csv, `All_Transactions_${new Date().toISOString().split('T')[0]}.csv`);
+
+                alert(`✅ Downloaded ${transactions.length} transactions!`);
+            } catch (e) {
+                console.error('Error downloading transactions:', e);
+                alert('Error downloading report. Please try again.');
+            }
+        }
+
+        async function downloadFraudCSV() {
+            try {
+                // Fetch all transactions
+                const response = await fetch(`${window.location.protocol}//${window.location.hostname}:5000/api/transactions?limit=1000`);
+                const allTransactions = await response.json();
+
+                // Filter only fraud (BLOCKED + REVIEW)
+                const fraudTransactions = allTransactions.filter(t => {
+                    const status = t.fraud_check?.status || t.status;
+                    return status === 'BLOCKED' || status === 'REVIEW';
+                });
+
+                console.log(`[REPORTS] Fetched ${fraudTransactions.length} fraud transactions for CSV`);
+
+                // Create CSV content
+                let csv = 'Transaction ID,From,To,Amount,Category,Status,Risk Score,Fraud Reasons,Date,Location,IP Address\n';
+
+                fraudTransactions.forEach(txn => {
+                    const txnId = txn.transaction_id || txn.id || 'N/A';
+                    const from = txn.from_email || txn.customer || 'N/A';
+                    const to = txn.to_email || txn.merchant || 'N/A';
+                    const amount = txn.amount || 0;
+                    const category = txn.category || 'Other';
+                    const status = txn.fraud_check?.status || txn.status || 'REVIEW';
+                    const riskScore = txn.fraud_check?.risk_score || txn.risk_score || 0;
+                    const reasons = (txn.fraud_check?.reasons || txn.reasons || []).join('; ');
+                    const date = new Date(txn.timestamp).toLocaleString();
+                    const location = txn.location || 'Online';
+                    const ip = txn.ip_address || 'N/A';
+
+                    csv += `"${txnId}","${from}","${to}",${amount},"${category}","${status}",${riskScore},"${reasons}","${date}","${location}","${ip}"\n`;
+                });
+
+                // Download CSV
+                downloadCSV(csv, `Fraud_Transactions_${new Date().toISOString().split('T')[0]}.csv`);
+
+                alert(`✅ Downloaded ${fraudTransactions.length} fraud transactions!`);
+            } catch (e) {
+                console.error('Error downloading fraud report:', e);
+                alert('Error downloading report. Please try again.');
+            }
+        }
+
+        async function downloadCustomersCSV() {
+            try {
+                // Fetch all transactions to calculate customer stats
+                const response = await fetch(`${window.location.protocol}//${window.location.hostname}:5000/api/transactions?limit=1000`);
+                const transactions = await response.json();
+
+                // Group by customer
+                const customerStats = {};
+                transactions.forEach(txn => {
+                    const customer = txn.from_email || txn.customer;
+                    if (!customer) return;
+
+                    if (!customerStats[customer]) {
+                        customerStats[customer] = {
+                            email: customer,
+                            totalTransactions: 0,
+                            totalSpent: 0,
+                            blockedCount: 0,
+                            reviewCount: 0,
+                            approvedCount: 0,
+                            avgRiskScore: 0,
+                            riskScores: []
+                        };
+                    }
+
+                    const status = txn.fraud_check?.status || txn.status;
+                    const risk = txn.fraud_check?.risk_score || txn.risk_score || 0;
+
+                    customerStats[customer].totalTransactions++;
+                    customerStats[customer].totalSpent += (txn.amount || 0);
+                    customerStats[customer].riskScores.push(risk);
+
+                    if (status === 'BLOCKED') customerStats[customer].blockedCount++;
+                    else if (status === 'REVIEW') customerStats[customer].reviewCount++;
+                    else customerStats[customer].approvedCount++;
+                });
+
+                // Calculate averages
+                Object.values(customerStats).forEach(stats => {
+                    stats.avgRiskScore = stats.riskScores.length > 0
+                        ? (stats.riskScores.reduce((a, b) => a + b, 0) / stats.riskScores.length).toFixed(1)
+                        : 0;
+                });
+
+                console.log(`[REPORTS] Generated stats for ${Object.keys(customerStats).length} customers`);
+
+                // Create CSV content
+                let csv = 'Customer Email,Total Transactions,Total Spent,Approved,Review,Blocked,Avg Risk Score\n';
+
+                Object.values(customerStats).forEach(stats => {
+                    csv += `"${stats.email}",${stats.totalTransactions},$${stats.totalSpent.toFixed(2)},${stats.approvedCount},${stats.reviewCount},${stats.blockedCount},${stats.avgRiskScore}\n`;
+                });
+
+                // Download CSV
+                downloadCSV(csv, `Customer_Analytics_${new Date().toISOString().split('T')[0]}.csv`);
+
+                alert(`✅ Downloaded analytics for ${Object.keys(customerStats).length} customers!`);
+            } catch (e) {
+                console.error('Error downloading customer analytics:', e);
+                alert('Error downloading report. Please try again.');
+            }
+        }
+
+        function downloadCSV(csvContent, filename) {
+            const blob = new Blob([csvContent], { type: 'text/csv;charset-utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+
+            link.setAttribute('href', url);
+            link.setAttribute('download', filename);
+            link.style.visibility = 'hidden';
+
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        // PDF Download Functions
+        async function downloadTransactionsPDF() {
+            try {
+                const response = await fetch(`${window.location.protocol}//${window.location.hostname}:5000/api/transactions?limit=100`);
+                const transactions = await response.json();
+
+                const reportHTML = `<html><head><title>All Transactions Report</title><style>body{font-family:Arial;padding:20px}h1{color:#dc3545;border-bottom:3px solid #dc3545;padding-bottom:10px}table{width:100%;border-collapse:collapse;margin-top:20px;font-size:11px}th{background:#dc3545;color:white;padding:8px;text-align:left}td{padding:6px;border-bottom:1px solid #ddd}tr:hover{background:#f5f5f5}</style></head><body><h1>🏦 All Transactions Report</h1><p><strong>Generated:</strong> ${new Date().toLocaleString()}</p><p><strong>Total:</strong> ${transactions.length}</p><table><thead><tr><th>ID</th><th>From</th><th>To</th><th>Amount</th><th>Status</th><th>Risk</th><th>Date</th></tr></thead><tbody>${transactions.map(txn => `<tr><td>${txn.transaction_id || 'N/A'}</td><td>${txn.from_email || 'N/A'}</td><td>${txn.to_email || 'N/A'}</td><td>$${(txn.amount || 0).toFixed(2)}</td><td>${txn.fraud_check?.status || txn.status || 'COMPLETED'}</td><td>${txn.fraud_check?.risk_score || txn.risk_score || 0}</td><td>${new Date(txn.timestamp).toLocaleDateString()}</td></tr>`).join('')}</tbody></table></body></html>`;
+
+                const printWindow = window.open('', '', 'width=800,height=600');
+                printWindow.document.write(reportHTML);
+                printWindow.document.close();
+                printWindow.focus();
+                setTimeout(() => printWindow.print(), 250);
+            } catch (e) {
+                alert('Error generating PDF');
+            }
+        }
+
+        async function downloadFraudPDF() {
+            try {
+                const response = await fetch(`${window.location.protocol}//${window.location.hostname}:5000/api/transactions?limit=1000`);
+                const allTransactions = await response.json();
+                const fraudTransactions = allTransactions.filter(t => {
+                    const status = t.fraud_check?.status || t.status;
+                    return status === 'BLOCKED' || status === 'REVIEW';
+                });
+
+                const reportHTML = `<html><head><title>Fraud Report</title><style>body{font-family:Arial;padding:20px}h1{color:#dc3545;border-bottom:3px solid #dc3545;padding-bottom:10px}table{width:100%;border-collapse:collapse;margin-top:20px;font-size:10px}th{background:#dc3545;color:white;padding:8px;text-align:left}td{padding:6px;border-bottom:1px solid #ddd}.blocked{background:#ffe6e6}.review{background:#fff3cd}</style></head><body><h1>⚠️ Fraud Transactions Report</h1><p><strong>Generated:</strong> ${new Date().toLocaleString()}</p><p><strong>Total Fraud:</strong> ${fraudTransactions.length}</p><table><thead><tr><th>ID</th><th>From</th><th>Amount</th><th>Status</th><th>Risk</th><th>Reasons</th></tr></thead><tbody>${fraudTransactions.map(txn => {
+                    const status = txn.fraud_check?.status || txn.status;
+                    const rowClass = status === 'BLOCKED' ? 'blocked' : 'review';
+                    const reasons = (txn.fraud_check?.reasons || txn.reasons || []).join(', ');
+                    return `<tr class="${rowClass}"><td>${txn.transaction_id || 'N/A'}</td><td>${txn.from_email || 'N/A'}</td><td>$${(txn.amount || 0).toFixed(2)}</td><td><strong>${status}</strong></td><td>${txn.fraud_check?.risk_score || txn.risk_score || 0}</td><td>${reasons || 'N/A'}</td></tr>`;
+                }).join('')}</tbody></table></body></html>`;
+
+                const printWindow = window.open('', '', 'width=800,height=600');
+                printWindow.document.write(reportHTML);
+                printWindow.document.close();
+                printWindow.focus();
+                setTimeout(() => printWindow.print(), 250);
+            } catch (e) {
+                alert('Error generating PDF');
+            }
+        }
+
+        async function downloadCustomersPDF() {
+            try {
+                const response = await fetch(`${window.location.protocol}//${window.location.hostname}:5000/api/transactions?limit=1000`);
+                const transactions = await response.json();
+                const customerStats = {};
+                transactions.forEach(txn => {
+                    const customer = txn.from_email || txn.customer;
+                    if (!customer) return;
+                    if (!customerStats[customer]) {
+                        customerStats[customer] = { email: customer, totalTransactions: 0, totalSpent: 0, blockedCount: 0, reviewCount: 0, approvedCount: 0, riskScores: [] };
+                    }
+                    const status = txn.fraud_check?.status || txn.status;
+                    customerStats[customer].totalTransactions++;
+                    customerStats[customer].totalSpent += (txn.amount || 0);
+                    customerStats[customer].riskScores.push(txn.fraud_check?.risk_score || txn.risk_score || 0);
+                    if (status === 'BLOCKED') customerStats[customer].blockedCount++;
+                    else if (status === 'REVIEW') customerStats[customer].reviewCount++;
+                    else customerStats[customer].approvedCount++;
+                });
+                Object.values(customerStats).forEach(stats => {
+                    stats.avgRiskScore = stats.riskScores.length > 0 ? (stats.riskScores.reduce((a, b) => a + b, 0) / stats.riskScores.length).toFixed(1) : 0;
+                });
+
+                const reportHTML = `<html><head><title>Customer Analytics</title><style>body{font-family:Arial;padding:20px}h1{color:#0dcaf0;border-bottom:3px solid #0dcaf0;padding-bottom:10px}table{width:100%;border-collapse:collapse;margin-top:20px;font-size:11px}th{background:#0dcaf0;color:white;padding:8px;text-align:left}td{padding:6px;border-bottom:1px solid #ddd}</style></head><body><h1>📊 Customer Analytics Report</h1><p><strong>Generated:</strong> ${new Date().toLocaleString()}</p><p><strong>Total Customers:</strong> ${Object.keys(customerStats).length}</p><table><thead><tr><th>Email</th><th>Txns</th><th>Spent</th><th>Approved</th><th>Review</th><th>Blocked</th><th>Avg Risk</th></tr></thead><tbody>${Object.values(customerStats).map(stats => `<tr><td>${stats.email}</td><td>${stats.totalTransactions}</td><td>$${stats.totalSpent.toFixed(2)}</td><td>${stats.approvedCount}</td><td>${stats.reviewCount}</td><td>${stats.blockedCount}</td><td>${stats.avgRiskScore}</td></tr>`).join('')}</tbody></table></body></html>`;
+
+                const printWindow = window.open('', '', 'width=800,height=600');
+                printWindow.document.write(reportHTML);
+                printWindow.document.close();
+                printWindow.focus();
+                setTimeout(() => printWindow.print(), 250);
+            } catch (e) {
+                alert('Error generating PDF');
+            }
         }
 
         async function handleReportGeneration() {
-            const btn = event.target;
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Generating...';
-            btn.disabled = true;
-
-            const name = "Custom Report - " + new Date().toLocaleDateString();
-            const format = document.querySelector('input[name="format"]:checked').nextElementSibling.innerText;
-
-            try {
-                await fetch('/api/reports/generate', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: name, type: format })
-                });
-
-                setTimeout(() => {
-                    bootstrap.Modal.getInstance(document.getElementById('generateModal')).hide();
-                    showAction('Report Ready', 'Your custom report has been generated.');
-                    btn.innerHTML = 'Generate Report';
-                    btn.disabled = false;
-                    fetchReports(); // Refresh list
-                }, 1000);
-            } catch (e) {
-                alert("Error generating report");
-                btn.disabled = false;
-            }
+            alert('Use the download buttons in the table to generate and download reports with real data!');
+            bootstrap.Modal.getInstance(document.getElementById('generateModal')).hide();
         }
+
     </script>
 </body>
 

@@ -13,7 +13,7 @@ from fraud_engine import FraudEngine
 app = Flask(__name__, static_folder='.', template_folder='.')
 app.secret_key = 'super_secret_fraud_detection_key'  # Required for sessions
 CORS(app)
-fraud_engine = FraudEngine(use_ml=True, use_swift_ai=False)  # Use local SWIFT-AI LightGBM model
+fraud_engine = FraudEngine(use_ml=True, use_swift_ai=True)  # Use local SWIFT-AI LightGBM model
 
 # Database Config (Dedicated Fraud DB)
 MONGO_URI = "mongodb+srv://mkbharvad8080:Mkb%408080@cluster0.a82h2.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
@@ -117,6 +117,18 @@ def analyze_transaction():
     """Core Fraud Detection Endpoint (Public API for Banking Service)"""
     try:
         data = request.json
+        
+        # BRIDGE LOGGING
+        print("\n" + "="*50)
+        print("🌉 DATA BRIDGE: BANKING SERVICE -> FRAUD SERVICE")
+        print("="*50)
+        print(f"[BRIDGE] 📥 Receiving Full User Profile Data...")
+        print(f"[BRIDGE] Data Packet Size: {len(str(data))} bytes")
+        print(f"[BRIDGE] User:    {data.get('customer', 'Unknown')}")
+        print(f"[BRIDGE] Amount:  ${data.get('amount', 0)}")
+        print(f"[BRIDGE] Balance: ${data.get('current_balance', 'N/A')}")
+        print("-" * 50 + "\n")
+
         # 1. Check Rules first (Dynamic from DB)
         active_rules = list(rules_coll.find({"status": "Active"}))
         rule_score = 0
@@ -136,29 +148,55 @@ def analyze_transaction():
                         rule_reasons.append(f"Rule: {rule['name']}")
             except: pass
 
-        # 2. Use Hybrid Engine (ML + Static Rules)
+        # 2. Use Hybrid Decision Engine (ML + Business Rules)
+        print(f"[ENGINE] 🧠 Evaluating Transaction {data.get('id', 'NEW')}...")
+        
         # Check if status is already determined (e.g. Validation Failure from Bank)
-        if data.get('status'):
+        if data.get('status') or data.get('type') == 'Validation Failure':
+             is_validation_fail = data.get('type') == 'Validation Failure'
              decision = {
-                 "status": data.get('status'),
-                 "risk_score": 90 if data.get('status') == 'Blocked' else 0,
+                 "status": data.get('status', 'Blocked' if is_validation_fail else 'Review'),
+                 "risk_score": 0 if is_validation_fail else (90 if data.get('status') == 'Blocked' else 0),
                  "reasons": data.get('reasons', ["External System Validation Failed"]),
-                 "action": "deny" if data.get('status') == 'Blocked' else "allow",
+                 "action": "deny" if data.get('status') == 'Blocked' or is_validation_fail else "allow",
                  "explainability": {"pre_check": True}
              }
         else:
-            decision = fraud_engine.decide(data)
-        
-        # 3. Merge
-        decision['risk_score'] = min(100, decision['risk_score'] + rule_score)
-        decision['reasons'].extend(rule_reasons)
+            # Context: Fetch last transaction for IP Change Detection
+            customer_id = data.get('customer')
+            last_ip = None
+            if customer_id:
+                # Get the absolute last transaction attempt, regardless of blocked status, to catch the immediate change
+                last_txn = fraud_analysis_coll.find_one(
+                    {"customer": customer_id}, 
+                    sort=[("timestamp", -1)] # Use timestamp provided in data or analyzed_at
+                )
+                if last_txn:
+                    last_ip = last_txn.get('ip_address')
+                    print(f"[DEBUG] Only Check: Last IP for {customer_id} was {last_ip}")
+                    data['last_ip_address'] = last_ip
+                else:
+                    print(f"[DEBUG] IP Check: No previous transaction found for {customer_id}")
+            
+            # New Engine returns tuple: (score, status, reasons, logs, explain)
+            risk_score, status, reasons, logs, explain = fraud_engine.decide(data, db=db)
+            
+            decision = {
+                 "status": status,
+                 "risk_score": risk_score,
+                 "reasons": reasons,
+                 "action": "deny" if status == "Blocked" else "allow",
+                 "explain": explain # Include JSON explainability
+            }
         
         # 4. Store COMPLETE Analysis Record for Dashboard
         analysis_record = {
             "transaction_id": data.get('id', f"TXN-{random.randint(100000,999999)}"),
             "risk_score": decision['risk_score'],
-            "decision": decision['status'], # Use Status (Blocked/Approved) for consistency with Dashboard
+            "decision": decision['status'], 
             "reasons": decision['reasons'],
+            "logs": logs, # Store the proof logs
+            "explain": explain, # Store AI explainability JSON
             "analyzed_at": datetime.utcnow(),
             
             # Key Transaction Details
@@ -186,7 +224,8 @@ def analyze_transaction():
         # Store in fraud-specific analysis collection
         db['fraud_analysis'].update_one(
             {"transaction_id": analysis_record['transaction_id']}, 
-            {"$set": analysis_record}, 
+            {"$set": analysis_record},
+            upsert=True
         )
 
         # 5. Auto-Create Alert for High Risk Transactions
@@ -267,12 +306,13 @@ def dashboard_stats():
     amex_disc = fraud_analysis_coll.count_documents({"card_type": {"$in": ["Amex", "Discover"]}})
     
     # ML Model Metrics
+    model_active = fraud_engine.model is not None
     ml_metrics = {
-        "model_active": fraud_engine.use_ml or fraud_engine.swift_ai is not None,
-        "engine_version": "v4.0-SWIFT-AI" if fraud_engine.swift_ai else ("v3.0-LightGBM" if fraud_engine.use_ml else "v2.0-Rules"),
-        "swift_ai_connected": fraud_engine.swift_ai is not None,
-        "local_ml_active": fraud_engine.use_ml,
-        "avg_inference_time": "<20ms" if fraud_engine.swift_ai else ("<1ms" if fraud_engine.use_ml else "<1ms")
+        "model_active": model_active,
+        "engine_version": "v5.0-Embedded-ML" if model_active else "v2.0-Rules",
+        "swift_ai_connected": False, # Network API removed
+        "local_ml_active": model_active,
+        "avg_inference_time": "<1ms" if model_active else "N/A"
     }
     
     # Calculate ML accuracy (from recent predictions)
@@ -281,7 +321,8 @@ def dashboard_stats():
         # Calculate accuracy metrics
         high_risk_correct = sum(1 for p in ml_predictions if p.get('risk_score', 0) > 70 and p.get('decision') in ['Blocked', 'Review'])
         low_risk_correct = sum(1 for p in ml_predictions if p.get('risk_score', 0) < 40 and p.get('decision') == 'Approved')
-        ml_metrics['estimated_accuracy'] = round((high_risk_correct + low_risk_correct) / len(ml_predictions) * 100, 1)
+        estimated_acc = (high_risk_correct + low_risk_correct) / len(ml_predictions) * 100 if len(ml_predictions) > 0 else 0
+        ml_metrics['estimated_accuracy'] = round(estimated_acc, 1)
     else:
         ml_metrics['estimated_accuracy'] = 0
 
@@ -305,8 +346,12 @@ def dashboard_stats():
     })
 
 # 1. TRANSACTIONS
-@app.route('/api/transactions', methods=['GET'])
-def get_transactions():
+@app.route('/api/transactions', methods=['GET', 'POST'])
+def manage_transactions_api():
+    if request.method == 'POST':
+        # This allows the simulator to inject transactions directly into the fraud engine
+        return analyze_transaction()
+        
     if 'admin_logged_in' not in session: return jsonify({"error": "Unauthorized"}), 401
     limit = int(request.args.get('limit', 100))
     decision = request.args.get('status')  # Frontend still uses 'status' param
@@ -373,39 +418,21 @@ def get_models():
     # Get real ML model information
     models = []
     
-    # SWIFT-AI Model
-    if fraud_engine.swift_ai:
+    # Local LightGBM Model
+    # Local LightGBM Model
+    if fraud_engine.model:
         models.append({
-            "_id": "swift_ai_001",
-            "name": "SWIFT-AI LightGBM",
-            "type": "Gradient Boosting",
-            "accuracy": 92.0,
+            "_id": "local_ml_001",
+            "name": "Embedded SWIFT-AI LightGBM",
+            "type": "Gradient Boosting (LGBM)",
+            "accuracy": 94.0, # As per inference_api validation
             "status": "Active",
             "last_train": "2026-01-10",
-            "features": "100+",
-            "inference_time": "<20ms",
-            "source": "DA 2/SWIFT-AI",
-            "connection": "API (Port 5002)"
+            "features": f"{len(fraud_engine.feature_names)} features",
+            "inference_time": "<1ms",
+            "source": "fraud_service/fraud_model_lgb.txt",
+            "connection": "Embedded (Local Process)"
         })
-    
-    # Local LightGBM Model
-    if fraud_engine.use_ml:
-        try:
-            model_type = fraud_engine.ml_detector.model_type if hasattr(fraud_engine.ml_detector, 'model_type') else 'lightgbm'
-            models.append({
-                "_id": "local_ml_001",
-                "name": f"Local {model_type.upper()} Model",
-                "type": "LightGBM" if model_type == 'lightgbm' else "Random Forest",
-                "accuracy": 95.0 if model_type == 'lightgbm' else 90.0,
-                "status": "Active",
-                "last_train": "2026-01-10",
-                "features": "50" if model_type == 'lightgbm' else "7",
-                "inference_time": "<1ms",
-                "source": "fraud_service/fraud_model_lgb.txt" if model_type == 'lightgbm' else "fraud_service/fraud_model.pkl",
-                "connection": "Local"
-            })
-        except:
-            pass
     
     # Rule-based Engine (always available)
     models.append({
@@ -581,9 +608,76 @@ def get_analytics():
         "locations": aggregate_field("location")  # Cities
     })
 
-# 11. CUSTOMERS - Removed (Banking Service owns customer data)
-# Fraud Service does not store or access customer information
-
+# 11. CUSTOMERS
+@app.route('/api/customers/<customer_id>', methods=['GET'])
+def get_customer_details(customer_id):
+    if 'admin_logged_in' not in session: return jsonify({"error": "Unauthorized"}), 401
+    
+    # Aggregate data from fraud_analysis_coll
+    pipeline = [
+        {"$match": {"customer": customer_id}},
+        {"$group": {
+            "_id": "$customer",
+            "total_spent": {"$sum": "$amount"},
+            "transaction_count": {"$sum": 1},
+            "avg_risk_score": {"$avg": "$risk_score"},
+            "avg_amount": {"$avg": "$amount"},
+            "last_transaction": {"$max": "$analyzed_at"},
+            "blocked_count": {"$sum": {"$cond": [{"$eq": ["$decision", "Blocked"]}, 1, 0]}},
+            "approved_count": {"$sum": {"$cond": [{"$eq": ["$decision", "Approved"]}, 1, 0]}},
+            "review_count": {"$sum": {"$cond": [{"$eq": ["$decision", "Review"]}, 1, 0]}}
+        }}
+    ]
+    
+    stats = list(fraud_analysis_coll.aggregate(pipeline))
+    
+    if not stats:
+        # Return basic mock if no history found, just to show the page works
+        return jsonify({
+            "customer_id": customer_id,
+            "name": "Unknown Customer",
+            "email": "N/A",
+            "risk_score": 0,
+            "total_spent": 0,
+            "transaction_count": 0,
+            "history": []
+        })
+        
+    stat = stats[0]
+    
+    # Fetch recent transactions
+    recent_txns = list(fraud_analysis_coll.find({"customer": customer_id}).sort("analyzed_at", -1).limit(20))
+    for t in recent_txns: t['_id'] = str(t['_id'])
+    
+    # Determine Risk Level
+    risk_score = int(stat['avg_risk_score'])
+    risk_level = "Critical" if risk_score > 80 else ("High" if risk_score > 50 else ("Medium" if risk_score > 20 else "Low"))
+    
+    # Mock Profile Info (Deterministic based on ID hash or similar)
+    # in a real app, you would fetch this from the User Service
+    return jsonify({
+        "customer_id": customer_id,
+        "name": f"Customer {customer_id[-4:]}", # Placeholder name
+        "email": f"{customer_id.lower()}@example.com",
+        "phone": "+1 (555) 000-0000",
+        "location": "New York, USA",
+        "member_since": "Jan 2024",
+        "age": 30 + (sum(map(ord, customer_id)) % 20), # Random-ish age
+        "kyc_status": "Verified",
+        "account_status": "Active",
+        
+        # Stats
+        "total_spent": stat['total_spent'],
+        "transaction_count": stat['transaction_count'],
+        "avg_amount": round(stat['avg_amount'], 2),
+        "risk_score": risk_score,
+        "risk_level": risk_level,
+        "fraud_alerts": stat['blocked_count'] + stat['review_count'],
+        "approved_count": stat['approved_count'],
+        
+        # Lists
+        "recent_transactions": recent_txns
+    })
 
 # --- SERVE HTML FILES (ADMIN UI) ---
 
@@ -602,6 +696,18 @@ def serve_static(filename):
     return send_from_directory('.', filename)
 
 # Page Routes
+@app.route('/')
+@login_required
+def home(): return send_from_directory('.', 'dashboard.html')
+
+@app.route('/dashboard')
+@login_required
+def dashboard_page(): return send_from_directory('.', 'dashboard.html')
+
+@app.route('/live-monitoring')
+@login_required
+def live_monitoring_page(): return send_from_directory('.', 'live-monitoring.html')
+
 @app.route('/transactions')
 @login_required
 def transactions_page(): return send_from_directory('.', 'transactions.html')

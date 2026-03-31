@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Make Payment - Swift AI Bank</title>
+    <title>Make Payment - Swift Bank</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
@@ -79,12 +79,12 @@
     </style>
 </head>
 
-<body>
+<body style="background: #f5f7fa; min-height: 100vh;">
     <nav class="navbar navbar-expand-lg navbar-light bg-white shadow-sm sticky-top">
         <div class="container-fluid px-4">
-            <a class="navbar-brand d-flex align-items-center" href="customer-portal.html">
-                <i class="fas fa-arrow-left text-primary me-2"></i>
-                <span class="fw-bold">Back to Portal</span>
+            <a class="navbar-brand d-flex align-items-center text-dark" href="account-dashboard.html">
+                <img src="images/logo.png" alt="Swift Bank Logo" class="brand-logo">
+                <span class="fw-bold fs-4"></span>
             </a>
         </div>
     </nav>
@@ -111,30 +111,39 @@
                         </div>
 
                         <form id="paymentForm">
+                            <!-- Payment Type Toggle -->
+                            <div class="mb-4 text-center">
+                                <div class="btn-group" role="group" aria-label="Payment Type">
+                                    <input type="radio" class="btn-check" name="paymentType" id="typeIndividual"
+                                        value="individual" checked>
+                                    <label class="btn btn-outline-primary px-4 py-2" for="typeIndividual">
+                                        <i class="fas fa-user me-2"></i>Individual
+                                    </label>
+
+                                    <input type="radio" class="btn-check" name="paymentType" id="typeMerchant"
+                                        value="merchant">
+                                    <label class="btn btn-outline-primary px-4 py-2" for="typeMerchant">
+                                        <i class="fas fa-store me-2"></i>Merchant
+                                    </label>
+                                </div>
+                            </div>
+
                             <!-- Payment Details Section -->
                             <div class="mb-4">
                                 <h6 class="fw-bold mb-3">Payment Details</h6>
 
-                                <div class="mb-3">
-                                    <label class="form-label fw-bold">Merchant/Receiver Email *</label>
-                                    <input type="email" class="form-control form-control-lg" id="merchantEmail"
-                                        placeholder="merchant@store.com" required>
-                                    <small class="text-muted">Enter the email of the person/merchant you want to
-                                        pay</small>
-                                </div>
-
-                                <div class="row mb-3">
-                                    <div class="col-md-6">
-                                        <label class="form-label fw-bold">Amount (USD) *</label>
-                                        <div class="input-group input-group-lg">
-                                            <span class="input-group-text">$</span>
-                                            <input type="number" class="form-control" id="amount" placeholder="500.00"
-                                                step="0.01" value="500.00" required>
-                                        </div>
+                                <!-- INDIVIDUAL FIELDS -->
+                                <div id="individualFields">
+                                    <div class="mb-3">
+                                        <label class="form-label fw-bold">Recipient Email or Account Number *</label>
+                                        <input type="text" class="form-control form-control-lg" id="recipientInput"
+                                            placeholder="merchant@store.com or 1234567890123456">
+                                        <small class="text-muted">Enter the email or 16-digit account number</small>
                                     </div>
-                                    <div class="col-md-6">
+
+                                    <div class="mb-3">
                                         <label class="form-label fw-bold">Category *</label>
-                                        <select class="form-select form-select-lg" id="category" required>
+                                        <select class="form-select form-select-lg" id="category">
                                             <option value="">Select Category</option>
                                             <option value="Electronics">Electronics</option>
                                             <option value="Groceries">Groceries</option>
@@ -145,6 +154,46 @@
                                             <option value="Bills & Utilities">Bills & Utilities</option>
                                             <option value="Other">Other</option>
                                         </select>
+                                    </div>
+                                </div>
+
+                                <!-- MERCHANT FIELDS (Hidden by default) -->
+                                <div id="merchantFields" style="display: none;">
+                                    <div class="mb-3 position-relative">
+                                        <label class="form-label fw-bold">Search Merchant *</label>
+                                        <div class="input-group input-group-lg">
+                                            <span class="input-group-text"><i class="fas fa-search"></i></span>
+                                            <input type="text" class="form-control" id="merchantSearch"
+                                                placeholder="Type to search merchant (e.g. 'Amazon')...">
+                                        </div>
+                                        <input type="hidden" id="selectedMerchantEmail">
+
+                                        <!-- Search Results Dropdown -->
+                                        <div id="merchantResults" class="list-group position-absolute w-100 shadow"
+                                            style="z-index: 1000; display: none; max-height: 200px; overflow-y: auto;">
+                                        </div>
+                                    </div>
+
+                                    <div id="selectedMerchantDisplay"
+                                        class="alert alert-info d-flex align-items-center mb-3" style="display:none;">
+                                        <i class="fas fa-store fs-4 me-3"></i>
+                                        <div>
+                                            <strong id="merchantNameDisplay">Merchant Name</strong>
+                                            <div class="small text-muted" id="merchantEmailDisplay">email@domain.com
+                                            </div>
+                                        </div>
+                                        <button type="button" class="btn-close ms-auto" aria-label="Close"
+                                            onclick="clearMerchantSelection()"></button>
+                                    </div>
+                                </div>
+
+                                <!-- COMMON FIELDS -->
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">Amount (USD) *</label>
+                                    <div class="input-group input-group-lg">
+                                        <span class="input-group-text">$</span>
+                                        <input type="number" class="form-control" id="amount" placeholder="500.00"
+                                            step="0.01" value="500.00" required>
                                     </div>
                                 </div>
 
@@ -197,56 +246,159 @@
             window.location.href = 'login.html';
         }
 
+        // Toggle Payment Type
+        document.querySelectorAll('input[name="paymentType"]').forEach(radio => {
+            radio.addEventListener('change', function () {
+                if (this.value === 'merchant') {
+                    document.getElementById('individualFields').style.display = 'none';
+                    document.getElementById('merchantFields').style.display = 'block';
+                    document.getElementById('recipientInput').removeAttribute('required');
+                    document.getElementById('category').removeAttribute('required');
+                } else {
+                    document.getElementById('individualFields').style.display = 'block';
+                    document.getElementById('merchantFields').style.display = 'none';
+                    document.getElementById('recipientInput').setAttribute('required', 'true');
+                    document.getElementById('category').setAttribute('required', 'true');
+                }
+            });
+        });
+
+        // Merchant Search Logic
+        const merchantSearchInput = document.getElementById('merchantSearch');
+        const merchantResults = document.getElementById('merchantResults');
+
+        merchantSearchInput.addEventListener('input', async function () {
+            const query = this.value.trim();
+            if (query.length < 1) {
+                merchantResults.style.display = 'none';
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/merchants/search?q=${encodeURIComponent(query)}`);
+                const merchants = await response.json();
+
+                merchantResults.innerHTML = '';
+                if (merchants.length > 0) {
+                    merchants.forEach(m => {
+                        const item = document.createElement('a');
+                        item.className = 'list-group-item list-group-item-action';
+                        item.innerHTML = `
+                            <div class="d-flex w-100 justify-content-between">
+                                <h6 class="mb-1 fw-bold">${m.business_name}</h6>
+                            </div>
+                            <small class="text-muted"><i class="fas fa-envelope me-1"></i>${m.email}</small>
+                        `;
+                        item.onclick = () => selectMerchant(m);
+                        merchantResults.appendChild(item);
+                    });
+                    merchantResults.style.display = 'block';
+                } else {
+                    merchantResults.style.display = 'none';
+                }
+            } catch (e) {
+                console.error("Search error", e);
+            }
+        });
+
+        function selectMerchant(merchant) {
+            document.getElementById('merchantSearch').value = '';
+            document.getElementById('merchantResults').style.display = 'none';
+            document.getElementById('merchantNameDisplay').textContent = merchant.business_name;
+            document.getElementById('merchantEmailDisplay').textContent = merchant.email;
+            document.getElementById('selectedMerchantEmail').value = merchant.email;
+
+            // Show selection
+            // Fix: Target specifically the merchant search input group, NOT the first input-group on page
+            document.getElementById('merchantSearch').closest('.input-group').style.display = 'none';
+            document.getElementById('selectedMerchantDisplay').style.display = 'flex';
+        }
+
+        function clearMerchantSelection() {
+            document.getElementById('selectedMerchantEmail').value = '';
+            // Fix: Show the specific merchant search input group
+            document.getElementById('merchantSearch').closest('.input-group').style.display = 'flex';
+            document.getElementById('selectedMerchantDisplay').style.display = 'none';
+        }
+
         // Check for linked cards
         async function checkPaymentMethod() {
             try {
-                const response = await fetch(`/api/cards/${user.email}`);
-                const cards = await response.json();
+                const [cardsResponse, accountResponse] = await Promise.all([
+                    fetch(`/api/cards/${user.email}`),
+                    fetch(`/api/account/summary?email=${user.email}`)
+                ]);
+
+                const cards = await cardsResponse.json();
+                const accountData = await accountResponse.json();
 
                 const paymentSection = document.getElementById('paymentMethodSection');
                 const paymentForm = document.getElementById('paymentForm');
 
-                if (!cards || cards.length === 0) {
+                // Determine effective payment methods
+                const hasCards = Array.isArray(cards) && cards.length > 0;
+                const hasAccount = accountData && !accountData.error;
+
+                if (!hasCards && !hasAccount) {
                     paymentForm.style.display = 'none';
                     paymentSection.innerHTML = `
                         <div class="alert alert-warning border-0 text-center py-4">
                             <i class="fas fa-credit-card fa-3x text-warning mb-3"></i>
                             <h4 class="fw-bold">No Payment Method Found</h4>
-                            <p class="text-muted">You need to link a credit card before making payments.</p>
+                            <p class="text-muted">You need to link a credit card or have a bank account.</p>
                             <a href="link-card.html" class="btn btn-warning fw-bold px-4">Link Card Now</a>
                         </div>
                     `;
-                } else {
-                    paymentForm.style.display = 'block';
+                    return;
+                }
 
-                    // Generate options for card selection
-                    let cardOptions = '';
-                    cards.forEach((c, index) => {
+                paymentForm.style.display = 'block';
+
+                const accountNumber = accountData.account_number || '0000000000000000';
+                const balance = accountData.balance || 0;
+
+                // Generate options for card selection (Debit Card FIRST)
+                let cardOptions = '';
+
+                if (hasAccount) {
+                    cardOptions += `
+                        <option value="DEBIT_CARD" selected>
+                            🏦 Debit Card (Account: ****${String(accountNumber).slice(-4)}) - Balance: $${balance.toLocaleString()}
+                        </option>
+                    `;
+                }
+
+                if (hasCards) {
+                    cards.forEach((c) => {
                         const limit = c.limit || 5000;
                         const spent = c.current_spent || 0;
                         const available = limit - spent;
-                        const isSelected = c.is_primary ? 'selected' : '';
+                        const cardType = c.card_type || 'Credit Card';
+                        const last4 = c.last_4 || 'XXXX';
 
                         cardOptions += `
-                            <option value="${c.card_id}" ${isSelected}>
-                                ${c.card_type} •••• ${c.last_4} (Available: $${available.toLocaleString()})
+                            <option value="${c.card_id}">
+                                💳 ${cardType} •••• ${last4} (Available: $${available.toLocaleString()})
                             </option>
                         `;
                     });
-
-                    paymentSection.innerHTML = `
-                        <div class="mb-4">
-                            <label class="form-label fw-bold">Select Payment Method</label>
-                            <div class="input-group input-group-lg">
-                                <span class="input-group-text bg-white text-primary"><i class="fas fa-credit-card"></i></span>
-                                <select class="form-select" id="selectedCard">
-                                    ${cardOptions}
-                                </select>
-                            </div>
-                            <small class="text-muted ms-1">Choose which linked card to use for this transaction.</small>
-                        </div>
-                    `;
                 }
+
+                paymentSection.innerHTML = `
+                    <div class="mb-4">
+                        <label class="form-label fw-bold">Select Payment Method</label>
+                        <div class="input-group input-group-lg">
+                            <span class="input-group-text" style="background: #28a745; color: white; border: none;">
+                                <i class="fas fa-credit-card"></i>
+                            </span>
+                            <select class="form-select" id="selectedCard" style="border-color: #28a745;">
+                                ${cardOptions}
+                            </select>
+                        </div>
+                        <small class="text-muted ms-1">Choose which payment method to use for this transaction.</small>
+                    </div>
+                `;
+
             } catch (e) {
                 console.error('Error checking payment method:', e);
                 document.getElementById('paymentMethodSection').innerHTML = '<div class="alert alert-danger">Error loading payment methods</div>';
@@ -267,10 +419,13 @@
         // Fetch Real IP & Location
         async function fetchUserContext() {
             try {
+                // Try ipapi.co first (Rich data: IP + Location)
                 const response = await fetch('https://ipapi.co/json/');
+                if (!response.ok) throw new Error('ipapi failed');
                 const data = await response.json();
+
                 userContext = {
-                    ip: data.ip || '127.0.0.1',
+                    ip: data.ip,
                     city: data.city || 'Unknown',
                     country: data.country_name || 'Unknown',
                     country_code: data.country_code || 'XX',
@@ -278,15 +433,47 @@
                     longitude: data.longitude || 0,
                     timezone: data.timezone || userContext.timezone
                 };
-                console.log('User Context Loaded:', userContext);
+                console.log('User Context Loaded (ipapi):', userContext);
             } catch (e) {
-                console.warn('Could not fetch IP data, using fallback:', e);
-                // Fallback for demo: Randomize slightly to show variety if API fails
-                if (Math.random() > 0.5) {
-                    userContext.ip = '203.0.113.' + Math.floor(Math.random() * 255);
-                    userContext.city = 'Mumbai';
-                    userContext.country = 'India';
-                    userContext.country_code = 'IN';
+                console.warn('Primary IP fetch failed, trying backup (ip-api)...');
+
+                try {
+                    // Backup 1: ip-api.com (Very reliable, free, usually HTTP but works on localhost)
+                    const response = await fetch('http://ip-api.com/json/');
+                    if (response.ok) {
+                        const data = await response.json();
+                        userContext = {
+                            ip: data.query,
+                            city: data.city || 'Unknown',
+                            country: data.country || 'Unknown',
+                            country_code: data.countryCode || 'XX',
+                            latitude: data.lat || 0,
+                            longitude: data.lon || 0,
+                            timezone: data.timezone || userContext.timezone
+                        };
+                        console.log('User Context Loaded (ip-api):', userContext);
+                        return; // Success
+                    }
+                } catch (err2) {
+                    console.warn('Backup 1 failed, trying minimal IP fetch...');
+                }
+
+                try {
+                    // Backup 2: Simple IP fetch
+                    const ipResponse = await fetch('https://api.ipify.org?format=json');
+                    const ipData = await ipResponse.json();
+
+                    userContext.ip = ipData.ip;
+                    userContext.city = 'Online'; // fallback
+
+                    console.log('User Context Loaded (ipify - IP only):', userContext);
+                } catch (err) {
+                    console.warn('All IP fetches failed, using realistic random IP:', err);
+                    // Generate a realistic looking Public IP
+                    const randomIp = `${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`;
+                    userContext.ip = randomIp;
+                    userContext.city = ['Mumbai', 'Delhi', 'Bangalore', 'New York', 'London'][Math.floor(Math.random() * 5)];
+                    userContext.country = 'Demo Location';
                 }
             }
         }
@@ -298,14 +485,26 @@
         document.getElementById('paymentForm').addEventListener('submit', async function (e) {
             e.preventDefault();
 
-            const merchantEmail = document.getElementById('merchantEmail').value;
+            const paymentType = document.querySelector('input[name="paymentType"]:checked').value;
+            let merchantEmail, category;
+
             const amount = parseFloat(document.getElementById('amount').value);
-            const category = document.getElementById('category').value;
             const description = document.getElementById('description').value;
 
-            if (!merchantEmail || !category) {
-                alert('Please fill all required fields');
-                return;
+            if (paymentType === 'individual') {
+                merchantEmail = document.getElementById('recipientInput').value;
+                category = document.getElementById('category').value;
+                if (!merchantEmail || !category) {
+                    alert('Please enter recipient and category');
+                    return;
+                }
+            } else {
+                merchantEmail = document.getElementById('selectedMerchantEmail').value;
+                category = 'Shopping'; // Default for merchant payments
+                if (!merchantEmail) {
+                    alert('Please select a merchant from the search');
+                    return;
+                }
             }
 
             // SHOW PREMIUM COIN ANIMATION
@@ -381,6 +580,7 @@
                         category: category,
                         description: description,
                         card_id: selectedCardId,
+                        is_merchant_payment: paymentType === 'merchant', // New Flag
 
                         // Enhanced Fraud Context
                         location: {
@@ -411,6 +611,11 @@
                 // Wait for animation to complete
                 setTimeout(() => {
                     const statusContent = document.getElementById('statusContent');
+
+                    if (result.order_id && paymentType === 'merchant') {
+                        // Add Order ID to result display for merchants
+                        result.transaction_id = `<strong>Order ID: ${result.order_id}</strong><br>TXN: ${result.transaction_id}`;
+                    }
 
                     if (result.status === 'BLOCKED') {
                         // FRAUD DETECTED
@@ -469,6 +674,9 @@
 
                     } else if (result.success && result.status === 'APPROVED') {
                         // SUCCESS
+                        // Display Order ID if present
+                        const txnDisplay = result.transaction_id; // already formatted if order_id exists
+
                         statusContent.innerHTML = `
                             <div class="text-center">
                                 <i class="fas fa-check-circle text-success" style="font-size: 5rem;"></i>
@@ -489,7 +697,7 @@
                                         </div>
                                     </div>
                                     <hr>
-                                    <strong>Transaction ID:</strong> ${result.transaction_id}<br>
+                                    <strong>Reference:</strong> ${txnDisplay}<br>
                                     <strong>Amount:</strong> $${amount.toFixed(2)}<br>
                                     <strong>To:</strong> ${merchantEmail}<br>
                                     <strong>Category:</strong> ${category}<br>
