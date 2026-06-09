@@ -1,120 +1,149 @@
-# Swift AI - Fraud Detection System
+# Swift AI - Full-Stack Fraud Detection & Real-Time Analytics Platform 🚀
 
-A stunning, modern fraud detection system design with real-time analytics and behavioral monitoring.
+A production-ready, full-stack fraud detection system powered by Machine Learning, adaptive business rules, and real-time transaction monitoring. 
 
-## 🎨 Design Features
-
-### Color Palette
-- **Primary Accent**: Coral Red (#FF6B6B)
-- **Secondary Accent**: Teal (#4ECDC4)
-- **Tertiary Accent**: Yellow (#FFE66D)
-- **Success**: Green (#51CF66)
-- **Warning**: Orange (#FFA94D)
-- **Background**: Dark theme with glassmorphism effects
-
-### Pages Included
-
-1. **Dashboard** - Real-time overview with KPIs, fraud trends, and critical alerts
-2. **Live Transaction Monitoring** - Real-time transaction stream with risk scoring
-3. **Fraud Alerts & Case Management** - Alert cards with priority levels and actions
-4. **Transaction Details** - Detailed view with fraud indicators and ML explainability
-5. **Customer Behavioral Profile** - User behavior analysis and device fingerprinting
-6. **Risk Scoring & Anomaly Insights** - Risk distribution and anomaly detection
-7. **Analytics & Reports** - Performance metrics and fraud pattern analysis
-8. **Model & Detection Rules** - ML model management and rule configuration
-9. **System Integrations** - Banking system integrations and connection status
-10. **Feedback & Adaptive Learning** - Model training feedback loop
-11. **User & Role Management** - Team member management and permissions
-12. **Audit Logs & Compliance** - Complete activity tracking
-13. **Settings & Configuration** - System configuration and preferences
-
-## 🚀 Features
-
-- **Modern UI/UX**: Dark theme with vibrant accent colors
-- **Glassmorphism Effects**: Translucent cards with backdrop blur
-- **Responsive Design**: Works on desktop, tablet, and mobile
-- **Smooth Animations**: Micro-interactions and transitions
-- **Rich Data Visualization**: Charts, gauges, and heatmaps
-- **Interactive Elements**: Hover effects and dynamic states
-- **Professional Typography**: Inter font family
-- **Icon Integration**: Font Awesome 6.4.0
-
-## 📁 Project Structure
-
-```
-DA/
-├── index.html              # Main HTML file
-├── styles/
-│   ├── main.css           # Core styles and layout
-│   ├── components.css     # Component-specific styles
-│   └── pages.css          # Page-specific styles
-└── js/
-    ├── main.js            # Main navigation logic
-    ├── pages.js           # Additional page templates
-    └── final-pages.js     # Final page templates
-```
-
-## 🎯 Design Principles
-
-1. **Visual Excellence**: Premium, state-of-the-art design
-2. **Rich Aesthetics**: Vibrant colors and dynamic animations
-3. **User Experience**: Intuitive navigation and clear hierarchy
-4. **Performance**: Optimized CSS and smooth transitions
-5. **Accessibility**: Semantic HTML and proper contrast ratios
-
-## 💻 Usage
-
-Simply open `index.html` in a modern web browser. No build process or server required.
-
-### Navigation
-- Click on sidebar items to switch between pages
-- All pages are dynamically loaded
-- Mobile-responsive sidebar toggle
-
-## 🎨 Customization
-
-### Colors
-Edit CSS variables in `styles/main.css`:
-```css
-:root {
-    --accent-primary: #FF6B6B;
-    --accent-secondary: #4ECDC4;
-    --accent-tertiary: #FFE66D;
-    /* ... more variables */
-}
-```
-
-### Adding New Pages
-1. Create page template in `js/pages.js` or `js/final-pages.js`
-2. Add navigation item in `index.html`
-3. Add page-specific styles in `styles/pages.css`
-
-## 📊 Data Integration
-
-This is a **design-only** implementation. To integrate with real data:
-1. Replace static content with API calls
-2. Integrate Chart.js or similar for charts
-3. Add WebSocket for real-time updates
-4. Connect to your fraud detection backend
-
-## 🌟 Highlights
-
-- **No Blue or Purple**: As requested, uses red, teal, yellow, green, and orange
-- **Inspired by Reference**: Modern dashboard aesthetic similar to the provided image
-- **Production-Ready**: Clean, maintainable code structure
-- **SEO Optimized**: Proper meta tags and semantic HTML
-
-## 📝 License
-
-This is a design template for educational and commercial use.
-
-## 🤝 Credits
-
-- **Design**: Custom fraud detection system UI
-- **Icons**: Font Awesome
-- **Fonts**: Google Fonts (Inter)
-- **Framework**: Vanilla HTML/CSS/JavaScript
+This platform connects a **Customer Banking Core** with a **Fraud Analyst Control Center**, backed by MongoDB and an embedded Python Random Forest classifier.
 
 ---
 
-**Built with ❤️ for Swift AI Fraud Detection Platform**
+## 🏗️ System Architecture
+
+The project is structured as a dual-microservice architecture communicating via REST APIs:
+
+```
+                  ┌─────────────────────────────────────────┐
+                  │          Customer Bank Portal           │
+                  │   (Port 5000 / swift-bank.vercel.app)   │
+                  └────────────────────┬────────────────────┘
+                                       │
+                         Sends Transaction Payload
+                                       ▼
+                  ┌─────────────────────────────────────────┐
+                  │         Fraud Detection Service         │
+                  │  (Port 5001 / swift-fraud.vercel.app)   │
+                  └────────────────────┬────────────────────┘
+                                       │
+                      Decides Risk using Hybrid Engine:
+                      - Business Rules & Blocklists
+                      - ML Random Forest model (.pkl)
+                      - Contextual Session Analysis
+                                       ▼
+                  ┌─────────────────────────────────────────┐
+                  │           MongoDB Databases             │
+                  │     (banking_core_db & fraud_db)        │
+                  └─────────────────────────────────────────┘
+```
+
+### 1. Customer Banking Core (`banking_service`)
+* **Role**: Simulates a banking platform where users register, link credit cards, transfer funds, and initiate payments.
+* **Technology**: Python Flask, MongoDB (`banking_core_db`), HTML5/CSS3/JavaScript.
+* **Key Feature**: Queries the Fraud Detection Service on checkout/payment requests, blocking or holding transactions based on real-time risk scores.
+
+### 2. Fraud Analyst Dashboard (`fraud_service`)
+* **Role**: The centralized control panel where fraud analysts manage system rules, view live-transaction tickers, review flagged cases, and monitor ML model performance.
+* **Technology**: Python Flask, Scikit-Learn, Joblib, MongoDB (`fraud_detection_engine_db`), HTML5/CSS3.
+* **Key Feature**: Hosts the hybrid Decision Engine and exposes the `/analyze` API endpoint.
+
+---
+
+## 🧠 The Hybrid Decision Engine
+
+The platform utilizes a **four-layer decision matrix** to evaluate transactions in under **20ms**:
+
+1. **Profile Identification (Layer 1)**: Analyzes historical customer patterns and looks for existing fraud flags or merchant-specific threat levels stored in MongoDB.
+2. **Rule-Based Filtering (Layer 2)**: Evaluates static parameters, global merchant blocklists, extreme transactional velocity limits, geofencing coordinates, and session hijacking flags (e.g. session IP changes).
+3. **Machine Learning Model (Layer 3)**: Evaluates transaction metadata (amount, category, hour of day, coordinate difference, etc.) using an embedded **Random Forest Classifier** (`custom_fraud_model.pkl`) to output a probability score.
+4. **Heuristic Fallback (Layer 3.5)**: A rule-based backup scoring mechanism that takes over if the primary ML binary libraries are missing or crash.
+5. **Final Aggregator (Layer 4)**: Weighs the outputs of the layers (20% Profile, 30% Rules, 50% ML Model) to assign a final Risk Score and status:
+   * **Score < 60%**: `Approved`
+   * **Score 60% - 84%**: `Review` (staged for analyst verification)
+   * **Score ≥ 85%**: `Blocked` (automatic denial)
+
+---
+
+## 🎨 UI/UX Features & Aesthetics
+
+* **Glassmorphic Design**: Modern dark theme dashboard utilizing vibrant accents (Coral Red, Teal, and Yellow) without conventional corporate blues/purples.
+* **Real-time Live Ticker**: Feeds transactions dynamically into the analyst's queue.
+* **Interactive Rule Builder**: Directly edit active fraud prevention rules from the UI, storing rules instantly in MongoDB.
+* **Analytical Graphs**: Chart.js charts showing loss prevention, risk distribution bins, and card-type statistics.
+
+---
+
+## 📁 Repository Structure
+
+```
+Swift-AI/
+├── banking_service/        # Customer bank portal app
+│   ├── app.py              # Flask backend server
+│   ├── vercel.json         # Vercel deployment configuration
+│   └── requirements.txt    # Service dependencies
+├── fraud_service/          # Fraud analyst system & ML engine
+│   ├── app.py              # Flask backend server
+│   ├── fraud_engine.py     # Hybrid decision engine
+│   ├── vercel.json         # Vercel deployment configuration
+│   ├── requirements.txt    # Service dependencies (optimized)
+│   └── models/
+│       ├── custom_fraud_model.pkl  # Trained Random Forest classifier
+│       └── scaler.pkl              # Scaler for ML features
+├── SWIFT_AI/               # Training pipeline & LightGBM API
+│   ├── src/
+│   │   ├── feature_eng.py  # Kaggle-inspired user ID creation
+│   │   ├── train_model.py  # 5-fold cross-validation pipeline
+│   │   └── inference_api.py# API using LightGBM
+│   └── README.md           # Model training specific instructions
+└── .gitignore              # Configured ignores for pycache, venv, and IDE files
+```
+
+---
+
+## 🚀 Local Quickstart
+
+### Prerequisites
+* Python 3.10+ installed
+* A running MongoDB instance or connection URI (configured by default to a remote database cluster).
+
+### Setup & Launch
+
+1. **Activate the Virtual Environment**:
+   ```bash
+   # On Windows (PowerShell):
+   .venv\Scripts\Activate.ps1
+   ```
+   
+2. **Start the Fraud Service (Port 5001)**:
+   ```bash
+   cd fraud_service
+   python app.py
+   ```
+   
+3. **Start the Banking Service (Port 5000)**:
+   ```bash
+   cd ../banking_service
+   python app.py
+   ```
+
+Access the **Bank Portal** at `http://localhost:5000` and the **Fraud Portal** at `http://localhost:5001` (Default credentials: `admin@swiftai.com` / `admin123`).
+
+---
+
+## ☁️ Vercel Deployment
+
+Both services are fully configured for serverless deployment using Vercel.
+
+### Deployment Configuration
+
+Because they are separate microservices with distinct API structures, they must be deployed as **two separate Vercel projects** linked to the same repository:
+
+1. **Fraud Service (`swift-ai-fraud`)**:
+   * **Root Directory**: `fraud_service`
+   * **Framework Preset**: `Other`
+   * **Environment Variables**:
+     * `MONGO_URI`: `mongodb+srv://...`
+
+2. **Banking Service (`swift-ai-bank`)**:
+   * **Root Directory**: `banking_service`
+   * **Framework Preset**: `Other`
+   * **Environment Variables**:
+     * `MONGO_URI`: `mongodb+srv://...`
+     * `FRAUD_API_URL`: `https://[YOUR-FRAUD-SERVICE-URL].vercel.app/analyze`
