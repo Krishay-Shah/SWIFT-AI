@@ -24,7 +24,7 @@ if hasattr(sys.stdout, "reconfigure"):
 fraud_engine = FraudEngine(use_ml=True, use_swift_ai=True)  # Use local SWIFT-AI LightGBM model
 
 # Database Config (Dedicated Fraud DB)
-MONGO_URI = "mongodb+srv://mkbharvad8080:Mkb%408080@cluster0.a82h2.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://mkbharvad8080:Mkb%408080@cluster0.a82h2.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
 client = MongoClient(MONGO_URI)
 db = client['fraud_detection_engine_db']
 
