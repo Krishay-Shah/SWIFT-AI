@@ -4,7 +4,6 @@ pymongo[srv]>=4.6.1
 numpy
 pandas
 joblib
-lightgbm
 dnspython
 scikit-learn
 python-dateutil

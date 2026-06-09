@@ -12,7 +12,7 @@ from datetime import datetime
 try:
     import lightgbm as lgb
     LIGHTGBM_AVAILABLE = True
-except ImportError:
+except (ImportError, OSError):
     LIGHTGBM_AVAILABLE = False
 
 class FraudEngine:
