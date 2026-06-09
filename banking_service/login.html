@@ -162,7 +162,7 @@
 
                     // Redirect based on role
                     if (result.user.role === 'Customer') {
-                        window.location.href = 'account-dashboard';
+                        window.location.href = '/portal/transactions';
                     } else if (result.user.role === 'Merchant') {
                         window.location.href = 'merchant-dashboard';
                     } else {

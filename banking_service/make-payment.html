@@ -82,7 +82,7 @@
 <body style="background: #f5f7fa; min-height: 100vh;">
     <nav class="navbar navbar-expand-lg navbar-light bg-white shadow-sm sticky-top">
         <div class="container-fluid px-4">
-            <a class="navbar-brand d-flex align-items-center text-dark" href="account-dashboard.html">
+            <a class="navbar-brand d-flex align-items-center text-dark" href="/portal/transactions">
                 <img src="images/logo.png" alt="Swift Bank Logo" class="brand-logo">
                 <span class="fw-bold fs-4"></span>
             </a>
@@ -210,7 +210,31 @@
                                     <i class="fas fa-shield-alt fs-3 me-3"></i>
                                     <div>
                                         <strong>🔒 Protected by Real-Time Fraud Detection</strong>
-                                        <p class="mb-0 small">AI analyzes your transaction in under 100ms</p>
+                                        <p class="mb-0 small">AI analyzes your transaction in under 1000ms</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- DEMO MODE: Quick Fill Buttons (for Presentation) -->
+                            <div class="card border-info mb-3" id="demoModeCard">
+                                <div class="card-body py-2 px-3">
+                                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                                        <small class="text-muted fw-bold me-1"><i class="fas fa-magic me-1"></i>Demo Quick Fill:</small>
+                                        <button type="button" class="btn btn-sm btn-outline-success" onclick="demoFill('normal')">
+                                            <i class="fas fa-check-circle me-1"></i>Normal Payment
+                                        </button>
+                                        <button type="button" class="btn btn-sm btn-outline-danger" onclick="demoFill('suspicious')">
+                                            <i class="fas fa-exclamation-triangle me-1"></i>Suspicious Transaction
+                                        </button>
+                                        <button type="button" class="btn btn-sm btn-outline-warning" onclick="simulateIpChange()">
+                                            <i class="fas fa-network-wired me-1"></i>Simulate IP Change
+                                        </button>
+                                        <div class="d-flex align-items-center gap-1 ms-auto">
+                                            <small class="text-muted"><i class="fas fa-credit-card me-1"></i>Pay with:</small>
+                                            <select id="demoPaymentSelect" class="form-select form-select-sm" style="min-width:200px;font-size:0.78rem;">
+                                                <option value="__loading__" disabled>Loading methods...</option>
+                                            </select>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -221,7 +245,7 @@
                                     <i class="fas fa-lock me-2"></i>Process Payment
                                 </button>
                                 <button type="button" class="btn btn-outline-secondary"
-                                    onclick="window.location.href='customer-portal.html'">
+                                    onclick="window.location.href='/portal/transactions'">
                                     Cancel
                                 </button>
                             </div>
@@ -403,6 +427,9 @@
                 console.error('Error checking payment method:', e);
                 document.getElementById('paymentMethodSection').innerHTML = '<div class="alert alert-danger">Error loading payment methods</div>';
             }
+
+            // After rendering main selector, populate the demo dropdown too
+            setTimeout(populateDemoPaymentSelect, 50);
         }
 
         // Context Data
@@ -492,19 +519,24 @@
             const description = document.getElementById('description').value;
 
             if (paymentType === 'individual') {
-                merchantEmail = document.getElementById('recipientInput').value;
+                merchantEmail = document.getElementById('recipientInput').value.trim();
                 category = document.getElementById('category').value;
                 if (!merchantEmail || !category) {
                     alert('Please enter recipient and category');
                     return;
                 }
             } else {
-                merchantEmail = document.getElementById('selectedMerchantEmail').value;
+                merchantEmail = document.getElementById('selectedMerchantEmail').value.trim();
                 category = 'Shopping'; // Default for merchant payments
                 if (!merchantEmail) {
                     alert('Please select a merchant from the search');
                     return;
                 }
+            }
+
+            if (!amount || amount <= 0) {
+                alert('Please enter a valid amount greater than 0');
+                return;
             }
 
             // SHOW PREMIUM COIN ANIMATION
@@ -737,6 +769,89 @@
                 `;
             }
         });
+
+        // ========================
+        // DEMO HELPER FUNCTIONS
+        // ========================
+
+        // Populate the demo "Pay with" dropdown whenever payment methods are loaded
+        function populateDemoPaymentSelect() {
+            const mainSelect = document.getElementById('selectedCard');
+            const demoSelect = document.getElementById('demoPaymentSelect');
+            if (!mainSelect || !demoSelect) return;
+
+            // Mirror options from main payment selector
+            demoSelect.innerHTML = '';
+            Array.from(mainSelect.options).forEach(opt => {
+                const o = document.createElement('option');
+                o.value = opt.value;
+                o.textContent = opt.textContent.trim();
+                if (opt.selected) o.selected = true;
+                demoSelect.appendChild(o);
+            });
+
+            // When user picks in the demo dropdown, sync to the main selector
+            demoSelect.onchange = () => {
+                mainSelect.value = demoSelect.value;
+            };
+        }
+
+        function demoFill(type) {
+            // Sync chosen demo payment method into the main payment selector
+            const demoSelect = document.getElementById('demoPaymentSelect');
+            const cardSelect = document.getElementById('selectedCard');
+            if (demoSelect && cardSelect && demoSelect.value !== '__loading__') {
+                cardSelect.value = demoSelect.value;
+            }
+
+            if (type === 'normal') {
+                document.getElementById('amount').value = '150.00';
+                const catEl = document.getElementById('category');
+                if (catEl) catEl.value = 'Groceries';
+                const recipEl = document.getElementById('recipientInput');
+                // Use own email to guarantee recipient exists in DB
+                if (recipEl) recipEl.value = user.email || 'admin@swiftai.com';
+                document.getElementById('description').value = 'Grocery shopping';
+                // Make sure individual tab is active
+                document.getElementById('typeIndividual').checked = true;
+                document.getElementById('individualFields').style.display = 'block';
+                document.getElementById('merchantFields').style.display = 'none';
+                console.log('[DEMO] Filled: Normal low-risk payment ($150), card:', cardSelect ? cardSelect.value : 'n/a');
+            } else if (type === 'suspicious') {
+                document.getElementById('amount').value = '9800.00';
+                const catEl = document.getElementById('category');
+                if (catEl) catEl.value = 'Electronics';
+                const recipEl = document.getElementById('recipientInput');
+                if (recipEl) recipEl.value = user.email || 'admin@swiftai.com';
+                document.getElementById('description').value = 'High-value electronics purchase';
+                document.getElementById('typeIndividual').checked = true;
+                document.getElementById('individualFields').style.display = 'block';
+                document.getElementById('merchantFields').style.display = 'none';
+                console.log('[DEMO] Filled: Suspicious high-value payment ($9,800), card:', cardSelect ? cardSelect.value : 'n/a');
+            }
+        }
+
+        function simulateIpChange() {
+            const originalIp = userContext.ip;
+            // Generate a clearly different IP for demo purposes
+            const fakeIp = `203.${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*255)}`;
+            userContext.ip = fakeIp;
+            
+            // Show a toast notification
+            const toast = document.createElement('div');
+            toast.className = 'alert alert-warning alert-dismissible position-fixed bottom-0 end-0 m-3 shadow-lg';
+            toast.style.cssText = 'z-index:9999;max-width:350px;animation:slideIn .3s ease';
+            toast.innerHTML = `
+                <strong><i class="fas fa-network-wired me-2"></i>IP Change Simulated!</strong><br>
+                <small>Original: <code>${originalIp}</code></small><br>
+                <small>New (fake): <code class="text-danger">${fakeIp}</code></small><br>
+                <small class="text-muted">Next payment will be BLOCKED by IP mismatch detection.</small>
+                <button type="button" class="btn-close" onclick="this.parentElement.remove()"></button>
+            `;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 8000);
+            console.log(`[DEMO] IP changed from ${originalIp} to ${fakeIp}`);
+        }
     </script>
 </body>
 

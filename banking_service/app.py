@@ -1,9 +1,11 @@
+# -*- coding: utf-8 -*-
 from flask import Flask, request, jsonify, render_template, send_from_directory, Response
 from flask_cors import CORS
 from pymongo import MongoClient
 from datetime import datetime, timedelta
 import random
 import os
+import sys
 import smtplib
 import requests
 from email.mime.text import MIMEText
@@ -11,6 +13,13 @@ from email.mime.multipart import MIMEMultipart
 
 app = Flask(__name__, static_folder='.', template_folder='.')
 CORS(app)
+
+# Avoid Windows console encoding crashes from unicode log messages.
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 # Email Config
 SMTP_SERVER = "smtp.gmail.com"
@@ -56,6 +65,15 @@ def server_error(e):
 @app.errorhandler(504)
 def gateway_timeout(e):
     return send_from_directory('.', '504.html'), 504
+
+# NEW MAPPED API URLS FOR CUSTOMER PORTAL
+@app.route('/portal/transactions')
+@app.route('/portal/profile')
+@app.route('/portal/devices')
+@app.route('/portal/security')
+@app.route('/portal/analytics')
+def render_customer_portal():
+    return send_from_directory('.', 'customer-portal.html')
 
 
 # Database Configuration
@@ -123,7 +141,7 @@ def paypal_webhook():
                 'payer', {}).get('email_address', 'Unknown')
 
             # Calculate risk score via Microservice
-            risk_score, reasoning = calculate_risk_score({
+            risk_score, reasoning, _ = calculate_risk_score({
                 "amount": amount,
                 "location": "PayPal",
                 "customer": payer_email,
@@ -323,6 +341,9 @@ def verify_otp():
 
         # Clear OTP
         db['otps'].delete_one({"email": email})
+
+        # Add $5000 demo balance on login
+        customers_coll.update_one({"email": email}, {"$inc": {"balance": 5000}})
 
         log_audit(email, "Login Successful", "Auth", "Login")
         return jsonify({"success": True, "user": user_data})
@@ -651,8 +672,13 @@ def calculate_risk_score(txn):
 
             # Identity / Enrichment (Optional but good for fallback)
             "customer": customer_email,
-            "ip_address": txn.get('ip_address'),
-            "device": txn.get('device_type', 'Unknown'),
+            "ip_address": txn.get('ip_address', 'Unknown'),
+            "device_type": txn.get('device_type', 'Unknown'),
+            "browser": txn.get('browser', 'Unknown'),
+            "os": txn.get('os', 'Unknown'),
+            "country": location_data.get('country', txn.get('country', 'Unknown')),
+            "latitude": txn.get('latitude', location_data.get('latitude', 0)),
+            "longitude": txn.get('longitude', location_data.get('longitude', 0)),
 
             # Legacy/Derived Context (Still useful for rules)
             "account_age_days": d1_days,
@@ -681,10 +707,7 @@ def calculate_risk_score(txn):
 
     except Exception as e:
         print(f"Risk Calculation Error: {e}")
-        return 0, ["Internal Error"]
-
-    # Fallback if service is down (Safe Default)
-    return 0, "Fraud Service Unavailable (Approved by Default)"
+        return 0, ["Internal Error"], {}
 
 
 # Location to Coordinates Mapping
@@ -1172,7 +1195,7 @@ def bank_transfer():
             # REPORT TO FRAUD SERVICE
             print(
                 f"[PAYMENT] ❌ Insufficient funds (Debit). Reporting to Fraud Service...")
-            calculate_risk_score({
+            calculate_risk_score({  # Result discarded intentionally (fire-and-forget logging)
                 "id": f"FAIL-{random.randint(100000, 999999)}",
                 "amount": amount,
                 "merchant": to_email,
@@ -2017,4 +2040,4 @@ def get_recent_transactions():
 
 if __name__ == '__main__':
     print("--- Swift Bank World-Class Backend Running ---")
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)

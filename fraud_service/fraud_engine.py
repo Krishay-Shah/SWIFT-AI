@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 import json
 import numpy as np
@@ -27,19 +28,30 @@ class FraudEngine:
         self.model = None
         self.lgb_model = None
         self.scaler = None
+        self.feature_names = []  # Required by app.py for model info display
         
         # 1. Load Operational Model (Random Forest)
         try:
             model_path = os.path.join(os.path.dirname(__file__), 'models', 'custom_fraud_model.pkl')
+            scaler_path = os.path.join(os.path.dirname(__file__), 'models', 'scaler.pkl')
             if os.path.exists(model_path):
                 self.model = joblib.load(model_path)
-                print(f"[FraudEngine] ✓ RF Model ready.")
-        except: pass
+                # Extract feature names from model if available
+                if hasattr(self.model, 'feature_names_in_'):
+                    self.feature_names = list(self.model.feature_names_in_)
+                else:
+                    self.feature_names = ['amt', 'category', 'city', 'state', 'lat', 'long',
+                                          'merch_lat', 'merch_long', 'hour', 'day_of_week', 'lat_diff', 'lon_diff']
+                print(f"[FraudEngine] ✓ RF Model ready ({len(self.feature_names)} features).")
+            if os.path.exists(scaler_path):
+                self.scaler = joblib.load(scaler_path)
+                print(f"[FraudEngine] ✓ Scaler loaded.")
+        except Exception as e:
+            print(f"[FraudEngine] ⚠ Model load error: {e}")
 
         # 2. SWIFT-AI Model (LightGBM) - DISABLED per request
         self.lgb_model = None
-        self.scaler = None
-        print(f"[FraudEngine] ! SWIFT-AI LightGBM Disabled. Using Custom PKL only.")
+        print(f"[FraudEngine] ! SWIFT-AI LightGBM Disabled. Using Custom PKL + Rules.")
 
     def decide(self, data, db=None):
         """
@@ -98,7 +110,7 @@ class FraudEngine:
         customer_id = data.get('customer')
         merchant_name = data.get('merchant', '').lower()
 
-        if db:
+        if db is not None:
             # Analyze Merchant Risk Profile
             merchant_context = db['merchants'].find_one({"business_name": {"$regex": merchant_name, "$options": "i"}})
             if merchant_context and merchant_context.get('risk_profile') == 'High':
@@ -142,16 +154,22 @@ class FraudEngine:
             log("❌ Reject: Geofencing violation")
 
         # IP Change Detection (Aggressive Security)
+        # Only trigger if both IPs are known, non-placeholder, and actually differ
         current_ip = data.get('ip_address')
         last_ip = data.get('last_ip_address')
-        if current_ip and last_ip and current_ip != last_ip:
+        PLACEHOLDER_IPS = {'Unknown', 'unknown', '127.0.0.1', None}
+        if (current_ip and last_ip
+                and current_ip not in PLACEHOLDER_IPS
+                and last_ip not in PLACEHOLDER_IPS
+                and current_ip != last_ip):
             score = 100
-            reasons.append("Critical: IP Address Mismatch detected from last session")
-            reasons.append("Action: Authenticate that session on another device")
-            log(f"❌ Reject: IP Changed from {last_ip} to {current_ip}")
+            reasons.append("🚨 CRITICAL: IP Address changed mid-session — possible account takeover")
+            reasons.append(f"Previous IP: {last_ip} → Current IP: {current_ip}")
+            reasons.append("Security policy: Payment blocked to protect your account")
+            log(f"❌ BLOCKED: IP Changed from {last_ip} → {current_ip} (same device, same location)")
 
         # Merchant Defined Custom Rules (Simulated from DB rules collection)
-        if db:
+        if db is not None:
             merchant_rules = list(db['rules'].find({"target": data.get('merchant'), "status": "Active"}))
             for rule in merchant_rules:
                 # Basic mock evaluation
@@ -237,25 +255,77 @@ class FraudEngine:
             return self._run_rf(data, log)
 
     def _run_rf(self, data, log):
-        """Primary Inference (Custom Random Forest .pkl)"""
+        """Primary Inference (Custom Random Forest .pkl) with heuristic fallback"""
         try:
             city, state = self._parse_loc(data.get('location', {}))
             lat = float(data.get('latitude', 0.0))
             lon = float(data.get('longitude', 0.0))
+            ts = data.get('timestamp')
+            if not hasattr(ts, 'hour'):
+                ts = datetime.now()
             
             input_df = pd.DataFrame([{
-                'amt': float(data.get('amount', 0)), 'category': data.get('category', 'misc_net'),
-                'city': city, 'state': state, 'lat': lat, 'long': lon,
-                'merch_lat': lat + 0.01, 'merch_long': lon + 0.01,
-                'hour': data['timestamp'].hour, 'day_of_week': data['timestamp'].weekday(),
-                'lat_diff': 0.01, 'lon_diff': 0.01
+                'amt': float(data.get('amount', 0)),
+                'category': data.get('category', 'misc_net'),
+                'city': city,
+                'state': state,
+                'lat': lat,
+                'long': lon,
+                'merch_lat': lat + 0.01,
+                'merch_long': lon + 0.01,
+                'hour': ts.hour,
+                'day_of_week': ts.weekday(),
+                'lat_diff': 0.01,
+                'lon_diff': 0.01
             }])
             
             prob = self.model.predict_proba(input_df)[0][1]
-            return int(prob * 100), ["AI: Custom model anomaly detected"], {"engine": "CustomRandomForest"}
+            score = int(prob * 100)
+            reasons = []
+            if prob > 0.7:
+                reasons.append("AI Model: High-confidence fraud pattern detected")
+            elif prob > 0.4:
+                reasons.append("AI Model: Moderate risk anomaly flagged")
+            log(f"[Layer 3] ML Score: {score}% (prob={prob:.3f})")
+            return score, reasons, {"engine": "CustomRandomForest", "confidence": round(max(prob, 1-prob), 2)}
         except Exception as e:
-            log(f"⚠ RF Error: {e}")
-            return 0, [], {"engine": "Error"}
+            log(f"⚠ RF Model Error: {e} — using heuristic fallback")
+            # Heuristic fallback: score based on amount, time, account age
+            return self._heuristic_score(data, log)
+
+    def _heuristic_score(self, data, log):
+        """Rule-based heuristic score when ML model fails"""
+        score = 0
+        reasons = []
+        amt = float(data.get('amount', 0))
+        
+        # Amount-based heuristics
+        if amt > 5000:
+            score += 30
+            reasons.append(f"Heuristic: Large transaction amount (${amt:.0f})")
+        elif amt > 2000:
+            score += 15
+        
+        # Time-based heuristics (late-night transactions are riskier)
+        ts = data.get('timestamp')
+        if hasattr(ts, 'hour') and (ts.hour < 5 or ts.hour > 23):
+            score += 15
+            reasons.append("Heuristic: Unusual transaction hour (late-night)")
+        
+        # New account heuristic
+        if int(data.get('account_age_days', 30)) < 7:
+            score += 20
+            reasons.append("Heuristic: Very new account (<7 days)")
+        
+        # High velocity
+        velocity = int(data.get('txn_velocity_24h', 1))
+        if velocity > 5:
+            score += 15
+            reasons.append(f"Heuristic: High transaction velocity ({velocity}/24h)")
+        
+        score = min(score, 70)  # Cap heuristic at 70 to avoid false blocks
+        log(f"[Layer 3] Heuristic Score: {score}%")
+        return score, reasons, {"engine": "HeuristicFallback", "confidence": 0.5}
 
     def _parse_ts(self, ts):
         if isinstance(ts, str):

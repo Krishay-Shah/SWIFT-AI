@@ -4,6 +4,7 @@ from pymongo import MongoClient
 from datetime import datetime, timedelta
 import json
 import os
+import sys
 import functools
 import random
 import threading
@@ -13,6 +14,13 @@ from fraud_engine import FraudEngine
 app = Flask(__name__, static_folder='.', template_folder='.')
 app.secret_key = 'super_secret_fraud_detection_key'  # Required for sessions
 CORS(app)
+
+# Avoid Windows console encoding crashes from unicode log messages.
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 fraud_engine = FraudEngine(use_ml=True, use_swift_ai=True)  # Use local SWIFT-AI LightGBM model
 
 # Database Config (Dedicated Fraud DB)
@@ -30,6 +38,7 @@ reports_coll = db['reports']
 rules_coll = db['rules']
 feedback_coll = db['feedback']
 integrations_coll = db['integrations']
+simulation_coll = db['simulation_analysis']
 
 # --- HELPER: Audit Log ---
 def log_audit(user, action, target, details=""):
@@ -74,10 +83,12 @@ def admin_login():
         }
         users_coll.insert_one(default_admin)
         session['admin_logged_in'] = True
+        session['admin_email'] = 'admin@swiftai.com'
         return jsonify({"success": True})
 
     if user and user.get('password') == password:
         session['admin_logged_in'] = True
+        session['admin_email'] = email
         log_audit(email, "Login", "Auth", "Successful")
         return jsonify({"success": True})
     
@@ -108,6 +119,7 @@ def admin_register():
 @app.route('/api/auth/logout', methods=['POST'])
 def logout():
     session.pop('admin_logged_in', None)
+    session.pop('admin_email', None)
     return jsonify({"success": True})
 
 # --- API ENDPOINTS (CORE FRAUD ENGINE) ---
@@ -151,6 +163,10 @@ def analyze_transaction():
         # 2. Use Hybrid Decision Engine (ML + Business Rules)
         print(f"[ENGINE] 🧠 Evaluating Transaction {data.get('id', 'NEW')}...")
         
+        # Initialize defaults (prevent NameError in pre-check branch)
+        logs = []
+        explain = {}
+
         # Check if status is already determined (e.g. Validation Failure from Bank)
         if data.get('status') or data.get('type') == 'Validation Failure':
              is_validation_fail = data.get('type') == 'Validation Failure'
@@ -161,20 +177,24 @@ def analyze_transaction():
                  "action": "deny" if data.get('status') == 'Blocked' or is_validation_fail else "allow",
                  "explainability": {"pre_check": True}
              }
+             logs = ["Pre-check: Transaction blocked before ML analysis"]
+             explain = {"pre_check": True, "status": decision["status"]}
         else:
             # Context: Fetch last transaction for IP Change Detection
             customer_id = data.get('customer')
             last_ip = None
             if customer_id:
-                # Get the absolute last transaction attempt, regardless of blocked status, to catch the immediate change
+                # Get the most recent analysis record for this customer
                 last_txn = fraud_analysis_coll.find_one(
-                    {"customer": customer_id}, 
-                    sort=[("timestamp", -1)] # Use timestamp provided in data or analyzed_at
+                    {"customer": customer_id},
+                    sort=[("analyzed_at", -1)]
                 )
                 if last_txn:
                     last_ip = last_txn.get('ip_address')
-                    print(f"[DEBUG] Only Check: Last IP for {customer_id} was {last_ip}")
-                    data['last_ip_address'] = last_ip
+                    print(f"[DEBUG] IP Check: Last IP for {customer_id} was {last_ip}")
+                    # Only inject last_ip if it's a real, known IP address
+                    if last_ip and last_ip not in ('Unknown', 'unknown', '127.0.0.1'):
+                        data['last_ip_address'] = last_ip
                 else:
                     print(f"[DEBUG] IP Check: No previous transaction found for {customer_id}")
             
@@ -188,10 +208,20 @@ def analyze_transaction():
                  "action": "deny" if status == "Blocked" else "allow",
                  "explain": explain # Include JSON explainability
             }
-        
-        # 4. Store COMPLETE Analysis Record for Dashboard
+
+        # Detect simulator traffic so it does not pollute live monitoring records.
+        txn_id = data.get('id', f"TXN-{random.randint(100000,999999)}")
+        channel = str(data.get('channel', '')).lower()
+        customer = str(data.get('customer', '')).lower()
+        is_simulation = (
+            channel == 'simulator'
+            or str(txn_id).upper().startswith('SIM-')
+            or customer.startswith('sim.user.')
+        )
+
+        # 4. Build COMPLETE Analysis Record
         analysis_record = {
-            "transaction_id": data.get('id', f"TXN-{random.randint(100000,999999)}"),
+            "transaction_id": txn_id,
             "risk_score": decision['risk_score'],
             "decision": decision['status'], 
             "reasons": decision['reasons'],
@@ -217,13 +247,22 @@ def analyze_transaction():
             "card_type": data.get('card_type', 'Unknown'),
             "latitude": data.get('latitude'),
             "longitude": data.get('longitude'),
-            
+            "is_simulation": is_simulation,
             "timestamp": data.get('timestamp', datetime.utcnow())
         }
-        
-        # Store in fraud-specific analysis collection
+
+        if is_simulation:
+            # Keep simulator history isolated from live monitoring records.
+            simulation_coll.update_one(
+                {"transaction_id": analysis_record['transaction_id']},
+                {"$set": analysis_record},
+                upsert=True
+            )
+            return jsonify(decision)
+
+        # Store in fraud-specific analysis collection (live records only)
         db['fraud_analysis'].update_one(
-            {"transaction_id": analysis_record['transaction_id']}, 
+            {"transaction_id": analysis_record['transaction_id']},
             {"$set": analysis_record},
             upsert=True
         )
@@ -253,8 +292,7 @@ def analyze_transaction():
 
 @app.route('/api/stats/dashboard', methods=['GET'])
 def dashboard_stats():
-    if 'admin_logged_in' not in session: return jsonify({"error": "Unauthorized"}), 401
-    
+    # Keep this endpoint readable for the live-monitoring demo page.
     # Transaction stats
     total = fraud_analysis_coll.count_documents({})
     blocked = fraud_analysis_coll.count_documents({"decision": "Blocked"})
@@ -349,24 +387,64 @@ def dashboard_stats():
 @app.route('/api/transactions', methods=['GET', 'POST'])
 def manage_transactions_api():
     if request.method == 'POST':
-        # This allows the simulator to inject transactions directly into the fraud engine
         return analyze_transaction()
-        
-    if 'admin_logged_in' not in session: return jsonify({"error": "Unauthorized"}), 401
+
+    # Keep this endpoint readable for the live-monitoring demo page.
     limit = int(request.args.get('limit', 100))
-    decision = request.args.get('status')  # Frontend still uses 'status' param
+    decision = request.args.get('status')
     query = {"decision": decision} if decision and decision != 'All' else {}
+    # Hide simulator-generated traffic from live/analyst transaction feeds.
+    query["$and"] = [
+        {"$or": [{"is_simulation": {"$exists": False}}, {"is_simulation": False}]},
+        {"transaction_id": {"$not": {"$regex": "^SIM-"}}},
+        {"channel": {"$ne": "Simulator"}}
+    ]
     
-    txns = list(fraud_analysis_coll.find(query).sort("timestamp", -1).limit(limit))
-    for t in txns: t['_id'] = str(t['_id'])
+    # Sort by analyzed_at (the field we actually store), fallback to timestamp
+    txns = list(fraud_analysis_coll.find(query).sort("analyzed_at", -1).limit(limit))
+    for t in txns:
+        t['_id'] = str(t['_id'])
+        # Normalize decision/status field for frontend compatibility
+        if 'decision' in t and 'status' not in t:
+            t['status'] = t['decision']
     return jsonify(txns)
 
 @app.route('/api/transactions/<txn_id>/details', methods=['GET'])
 def get_txn_details(txn_id):
     if 'admin_logged_in' not in session: return jsonify({"error": "Unauthorized"}), 401
     txn = fraud_analysis_coll.find_one({"transaction_id": txn_id})
-    if txn: txn['_id'] = str(txn['_id'])
+    if txn: 
+        txn['_id'] = str(txn['_id'])
+        if 'analyzed_at' in txn:
+            txn['analyzed_at'] = txn['analyzed_at'].isoformat() if hasattr(txn['analyzed_at'], 'isoformat') else str(txn['analyzed_at'])
     return jsonify(txn or {})
+
+# PROFILE - Analyst Dashboard Profile Section
+@app.route('/api/auth/profile', methods=['GET'])
+def get_admin_profile():
+    if 'admin_logged_in' not in session: return jsonify({"error": "Unauthorized"}), 401
+    email = session.get('admin_email', 'admin@swiftai.com')
+    user = users_coll.find_one({"email": email})
+    if not user:
+        user = users_coll.find_one({"role": {"$in": ["Super Admin", "Admin"]}})
+    if user:
+        return jsonify({
+            "name": user.get('name', 'Admin User'),
+            "email": user.get('email', email),
+            "role": user.get('role', 'Admin'),
+            "created_at": str(user.get('created_at', '')),
+            "avatar": f"https://ui-avatars.com/api/?name={user.get('name','Admin').replace(' ', '+')}&background=dc3545&color=fff"
+        })
+    return jsonify({"name": "Super Admin", "email": "admin@swiftai.com", "role": "Super Admin"})
+
+@app.route('/api/auth/profile/update', methods=['POST'])
+def update_admin_profile():
+    if 'admin_logged_in' not in session: return jsonify({"error": "Unauthorized"}), 401
+    data = request.json
+    email = session.get('admin_email', 'admin@swiftai.com')
+    update = {"name": data.get('name'), "phone": data.get('phone')}
+    users_coll.update_one({"email": email}, {"$set": update}, upsert=True)
+    return jsonify({"success": True})
 
 # 2. ALERTS
 @app.route('/api/alerts', methods=['GET'])
@@ -684,22 +762,13 @@ def get_customer_details(customer_id):
 @app.route('/login')
 def login_page(): return send_from_directory('.', 'login.html')
 
+@app.route('/register')
+def register_page(): return send_from_directory('.', 'register.html')
+
 @app.route('/')
-def index(): return redirect('/dashboard')
+def index(): return redirect('/login')
 
-@app.route('/dashboard')
-@login_required
-def dashboard(): return send_from_directory('.', 'dashboard.html')
-
-@app.route('/<path:filename>')
-def serve_static(filename):
-    return send_from_directory('.', filename)
-
-# Page Routes
-@app.route('/')
-@login_required
-def home(): return send_from_directory('.', 'dashboard.html')
-
+# Page Routes (login_required)
 @app.route('/dashboard')
 @login_required
 def dashboard_page(): return send_from_directory('.', 'dashboard.html')
@@ -756,7 +825,12 @@ def customers_page(): return send_from_directory('.', 'customers.html')
 @login_required
 def users_page(): return send_from_directory('.', 'user-management.html')
 
+# Catch-all: serves JS, CSS, images and any other static files (MUST be last)
+@app.route('/<path:filename>')
+def serve_static(filename):
+    return send_from_directory('.', filename)
+
 if __name__ == '__main__':
     print("--- FRAUD DETECTION SERVICE (ADMIN) ---")
     print("Running on http://localhost:5001")
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    app.run(host='0.0.0.0', port=5001, debug=False, use_reloader=False)

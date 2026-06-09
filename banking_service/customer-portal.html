@@ -9,35 +9,69 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
         rel="stylesheet">
-    <link rel="stylesheet" href="styles/new-style.css">
+    <link rel="stylesheet" href="/styles/new-style.css">
 </head>
 
 <body>
     <!-- Navigation -->
     <nav class="navbar navbar-expand-lg navbar-light bg-white shadow-sm sticky-top">
         <div class="container-fluid px-4">
-            <a class="navbar-brand d-flex align-items-center" href="#">
-                <img src="images/logo.png" alt="Swift Bank Logo" class="brand-logo">
+            <!-- Brand / Logo (Left) -->
+            <a class="navbar-brand d-flex align-items-center" href="/account-dashboard.html">
+                <img src="/images/logo.png" alt="Swift Bank Logo" class="brand-logo">
                 <span class="fw-bold fs-4"></span>
             </a>
+            
+            <!-- Navbar Toggler for Mobile -->
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+
+            <!-- Centered Navigation Links -->
+            <div class="collapse navbar-collapse justify-content-center" id="navbarNav">
+                <ul class="navbar-nav gap-2">
+                    <li class="nav-item">
+                        <a class="nav-link py-2 px-3 fw-medium" href="/portal/transactions" id="nav-transactions" onclick="navigateMappedUrl(event, 'transactions')">
+                            <i class="fas fa-list me-2"></i>Transactions
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link py-2 px-3 fw-medium" href="/portal/profile" id="nav-profile" onclick="navigateMappedUrl(event, 'profile')">
+                            <i class="fas fa-user me-2"></i>Profile
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link py-2 px-3 fw-medium" href="/portal/devices" id="nav-devices" onclick="navigateMappedUrl(event, 'devices')">
+                            <i class="fas fa-laptop me-2"></i>Devices
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link py-2 px-3 fw-medium" href="/portal/security" id="nav-security" onclick="navigateMappedUrl(event, 'security')">
+                            <i class="fas fa-lock me-2"></i>Security
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link py-2 px-3 fw-medium" href="/portal/analytics" id="nav-analytics" onclick="navigateMappedUrl(event, 'analytics')">
+                            <i class="fas fa-chart-line me-2"></i>Analytics
+                        </a>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- Profile / Actions (Right) -->
             <div class="d-flex align-items-center gap-2">
-                <span class="badge bg-success">Verified Customer</span>
+                <span class="badge bg-success d-none d-sm-inline">Verified Customer</span>
                 <div class="dropdown">
                     <button class="btn btn-light dropdown-toggle" type="button" data-bs-toggle="dropdown">
-                        <img src="https://ui-avatars.com/api/?name=Customer&background=0d6efd&color=fff"
-                            class="rounded-circle me-2" width="28" height="28">
-                        <span id="navUserName">Customer</span>
+                        <img src="https://ui-avatars.com/api/?name=User&background=0d6efd&color=fff"
+                            class="rounded-circle me-2" width="28" height="28" id="navUserIcon">
+                        <span id="navUserName">...</span>
                     </button>
-                    <ul class="dropdown-menu dropdown-menu-end">
-                        <li><a class="dropdown-item" href="#" onclick="showSection('profile')"><i
-                                    class="fas fa-user me-2"></i>My Profile</a></li>
-                        <li><a class="dropdown-item" href="#" onclick="showSection('security')"><i
-                                    class="fas fa-shield-alt me-2"></i>Security</a></li>
-                        <li>
-                            <hr class="dropdown-divider">
-                        </li>
-                        <li><a class="dropdown-item text-danger" href="#" onclick="logout()"><i
-                                    class="fas fa-sign-out-alt me-2"></i>Logout</a></li>
+                    <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+                        <li><a class="dropdown-item" href="/portal/profile"><i class="fas fa-user me-2 text-primary"></i>My Profile</a></li>
+                        <li><a class="dropdown-item" href="/portal/security"><i class="fas fa-shield-alt me-2 text-primary"></i>Security</a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><a class="dropdown-item text-danger" href="#" onclick="logout()"><i class="fas fa-sign-out-alt me-2"></i>Logout</a></li>
                     </ul>
                 </div>
             </div>
@@ -53,7 +87,7 @@
                 <p class="text-muted">Manage your account, view transactions, and monitor security</p>
             </div>
             <div class="col-auto">
-                <a href="make-payment.html" class="btn btn-primary btn-lg">
+                <a href="/make-payment.html" class="btn btn-primary btn-lg">
                     <i class="fas fa-credit-card me-2"></i>Make Payment
                 </a>
             </div>
@@ -64,7 +98,7 @@
             <div class="card-header bg-white border-0 pt-4 pb-0">
                 <div class="d-flex justify-content-between align-items-center">
                     <h5 class="fw-bold"><i class="fas fa-wallet me-2"></i>Payment Methods</h5>
-                    <button class="btn btn-primary btn-sm" onclick="window.location.href='link-card.html'">
+                    <button class="btn btn-primary btn-sm" onclick="window.location.href='/link-card.html'">
                         <i class="fas fa-plus me-1"></i>Link New Card
                     </button>
                 </div>
@@ -142,34 +176,7 @@
             </div>
         </div>
 
-        <!-- Tabs Navigation -->
-        <ul class="nav nav-pills mb-4">
-            <li class="nav-item">
-                <a class="nav-link active" href="#" onclick="showSection('transactions')">
-                    <i class="fas fa-list me-2"></i>Transactions
-                </a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link" href="#" onclick="showSection('profile')">
-                    <i class="fas fa-user me-2"></i>Profile
-                </a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link" href="#" onclick="showSection('devices')">
-                    <i class="fas fa-laptop me-2"></i>Devices
-                </a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link" href="#" onclick="showSection('security')">
-                    <i class="fas fa-lock me-2"></i>Security
-                </a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link" href="#" onclick="showSection('analytics')">
-                    <i class="fas fa-chart-line me-2"></i>Analytics
-                </a>
-            </li>
-        </ul>
+        <!-- Content Sections -->
 
         <!-- Transactions Section -->
         <div id="transactionsSection" class="content-section">
@@ -380,12 +387,59 @@
         if (!user.email) {
             window.location.href = 'login.html';
         }
+        
+        // Initial setup
+        document.getElementById('userName').innerText = user.email.split('@')[0];
 
-        // Helpers
-        // Helpers
+        // Initialize on load via Mapped API Path 
+        window.addEventListener('DOMContentLoaded', () => {
+            const currentPath = window.location.pathname;
+            const activeSection = currentPath.split('/portal/')[1] || 'transactions';
+            showSection(activeSection, false); // Initialize without smooth scroll jump
+        });
+
+        // Use new URL API dynamically
+        function navigateMappedUrl(e, sectionId) {
+            e.preventDefault();
+            window.history.pushState(null, '', `/portal/${sectionId}`);
+            showSection(sectionId, true);
+        }
+
+        // Keep browser back button working
+        window.addEventListener('popstate', () => {
+            const pathNode = window.location.pathname.split('/portal/')[1] || 'transactions';
+            showSection(pathNode, false);
+        });
+
+        function showSection(sectionId, shouldAnimate = true) {
+            // Update nav highlighting
+            document.querySelectorAll('.navbar-nav .nav-link').forEach(el => {
+                el.classList.remove('active', 'text-primary');
+            });
+            const targetNav = document.getElementById(`nav-${sectionId}`);
+            if (targetNav) {
+                targetNav.classList.add('active', 'text-primary');
+            }
+
+            // Hide all and show selected
+            document.querySelectorAll('.content-section').forEach(el => {
+                el.style.display = 'none';
+            });
+            const selectedContent = document.getElementById(sectionId + 'Section');
+            if (selectedContent) {
+                selectedContent.style.display = 'block';
+                if(shouldAnimate) {
+                    selectedContent.style.animation = 'fadeIn 0.3s ease-in-out';
+                }
+            }
+
+            // Load relevant data
+            if (sectionId === 'transactions') loadTransactions();
+        }
+
         function logout() {
             localStorage.removeItem('user');
-            window.location.href = 'login.html';
+            window.location.href = '/login.html';
         }
 
         // Load credit cards and Debit Card
@@ -548,6 +602,10 @@
                     document.getElementById('profileName').innerText = data.name || 'Customer';
                     document.getElementById('profileEmail').innerText = data.email || user.email;
                     document.getElementById('navUserName').innerText = data.name || user.email.split('@')[0];
+                    document.getElementById('userName').innerText = data.name || user.email.split('@')[0];
+                    if (data.name) {
+                        document.getElementById('navUserIcon').src = `https://ui-avatars.com/api/?name=${data.name.replace(' ','+')}&background=0d6efd&color=fff`;
+                    }
 
                     // Update edit fields
                     document.getElementById('editName').value = data.name || '';

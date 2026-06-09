@@ -271,6 +271,16 @@
         let isRunning = false;
         let simInterval;
         let stats = { processed: 0, fraud: 0, totalScore: 0, blocked: 0 };
+        const CITIES = ['Mumbai', 'Pune', 'Bengaluru', 'Delhi', 'Chennai', 'Ahmedabad'];
+        const CATEGORIES = ['Groceries', 'Food & Dining', 'Shopping', 'Travel', 'Bills & Utilities'];
+
+        function randomBetween(min, max) {
+            return Math.random() * (max - min) + min;
+        }
+
+        function pick(arr) {
+            return arr[Math.floor(Math.random() * arr.length)];
+        }
 
         function updateTPS() {
             document.getElementById('tpsValue').innerText = document.getElementById('tpsRange').value + ' TPS';
@@ -301,16 +311,42 @@
 
         async function generateTransaction() {
             const preset = document.getElementById('presetSelect').value;
-            const amount = preset === 'attack' ? (Math.random() * 50000 + 10000).toFixed(2) : (Math.random() * 5000).toFixed(2);
-            const location = preset === 'attack' ? 'High Risk Zone' : 'Mumbai, IN';
+            const configuredFraudProb = Math.max(0, Math.min(100, parseFloat(document.getElementById('fraudProb').value) || 0));
+
+            // Preset-specific behavior keeps generated traffic realistic.
+            const presetConfig = {
+                normal: { amountMin: 12, amountMax: 420, fraudBoost: 0.0 },
+                attack: { amountMin: 120, amountMax: 3500, fraudBoost: 0.35 },
+                random: { amountMin: 10, amountMax: 2200, fraudBoost: 0.1 },
+                low: { amountMin: 8, amountMax: 180, fraudBoost: -0.5 }
+            }[preset] || { amountMin: 10, amountMax: 400, fraudBoost: 0.0 };
+
+            const adjustedFraudProb = Math.max(0, Math.min(100, configuredFraudProb * (1 + presetConfig.fraudBoost)));
+            const forceFraud = Math.random() * 100 < adjustedFraudProb;
+            const city = pick(CITIES);
+            const category = pick(CATEGORIES);
+            const amount = randomBetween(presetConfig.amountMin, presetConfig.amountMax);
 
             const txnData = {
-                id: 'SIM-' + Math.random().toString(36).substr(2, 6).toUpperCase(),
-                customer: 'Sim-User-' + Math.floor(Math.random() * 1000),
-                amount: parseFloat(amount),
-                location: location,
+                id: 'SIM-' + Math.random().toString(36).substring(2, 8).toUpperCase(),
+                customer: `sim.user.${Math.floor(Math.random() * 9000 + 1000)}@swiftai.test`,
+                amount: Number(amount.toFixed(2)),
+                category,
                 channel: 'Simulator',
-                type: Math.random() > 0.5 ? 'Credit' : 'Debit'
+                type: Math.random() > 0.5 ? 'Credit' : 'Debit',
+                timestamp: new Date().toISOString(),
+                location: forceFraud
+                    ? { city: 'Unknown', country: 'High Risk Zone' }
+                    : { city, country: 'IN' },
+                country: forceFraud ? 'High Risk Zone' : 'IN',
+                ip_address: forceFraud
+                    ? `185.${Math.floor(randomBetween(30, 220))}.${Math.floor(randomBetween(1, 250))}.${Math.floor(randomBetween(1, 250))}`
+                    : `103.${Math.floor(randomBetween(1, 250))}.${Math.floor(randomBetween(1, 250))}.${Math.floor(randomBetween(1, 250))}`,
+                device_type: Math.random() > 0.65 ? 'Mobile' : 'Desktop',
+                browser: pick(['Chrome', 'Edge', 'Safari', 'Firefox']),
+                os: pick(['Windows', 'Android', 'iOS']),
+                account_age_days: forceFraud ? Math.floor(randomBetween(0, 5)) : Math.floor(randomBetween(30, 900)),
+                txn_velocity_24h: forceFraud ? Math.floor(randomBetween(8, 25)) : Math.floor(randomBetween(1, 4))
             };
 
             try {
@@ -321,21 +357,23 @@
                 });
                 const result = await response.json();
 
-                const score = result.risk_score;
-                const isFraud = result.status !== 'Approved';
+                const score = Number(result.risk_score || 0);
+                const decision = String(result.status || 'Approved');
+                const normalizedDecision = decision.toLowerCase();
+                const isFraud = normalizedDecision !== 'approved';
 
                 stats.processed++;
                 stats.totalScore += score;
                 if (isFraud) stats.fraud++;
-                if (result.status === 'Blocked') stats.blocked++;
+                if (normalizedDecision === 'blocked') stats.blocked++;
 
                 const entry = document.createElement('div');
                 entry.className = 'log-entry ' + (isFraud ? 'fraud' : 'success');
                 const time = new Date().toLocaleTimeString();
 
-                let content = `[${time}] ${txnData.id} | AMT: $${txnData.amount} | SCORE: ${score}`;
+                let content = `[${time}] ${txnData.id} | AMT: $${txnData.amount.toFixed(2)} | SCORE: ${score}`;
                 if (isFraud) {
-                    content += ` | [AI DECISION] ${result.status.toUpperCase()} Mode Engaged`;
+                    content += ` | [AI DECISION] ${decision.toUpperCase()} | ${txnData.location.country}`;
                 } else {
                     content += ` | Approved`;
                 }
