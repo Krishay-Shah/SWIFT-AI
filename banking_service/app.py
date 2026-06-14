@@ -25,8 +25,8 @@ if hasattr(sys.stdout, "reconfigure"):
 SMTP_SERVER = "smtp.gmail.com"
 FRAUD_API_URL = os.getenv("FRAUD_API_URL", "http://localhost:5001/analyze")
 SMTP_PORT = 587
-MAIL_USERNAME = "smaulik557@gmail.com"
-MAIL_PASSWORD = "fpbx ebwd nqsq ifah"
+MAIL_USERNAME = "shahkrishay1105@gmail.com"
+MAIL_PASSWORD = "vwcz gpoz vggn xymo"
 
 
 def send_email(to_email, subject, body):
